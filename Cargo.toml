@@ -1,0 +1,53 @@
+[package]
+name = "mew"
+version = "0.2.0"
+edition = "2024"
+description = "Hold a key, talk, and Mew types it. Fully local dictation for Windows."
+license = "MIT"
+
+[dependencies]
+ab_glyph = "0.2.32"
+anyhow = "1.0.104"
+cpal = "0.18.2"
+log = { version = "0.4.34", features = ["std"] }
+ort = "2.0.0-rc.14"
+raw-window-handle = "0.6.2"
+rusqlite = { version = "0.41.0", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+tiny-skia = "0.12.0"
+tray-icon = "0.26.1"
+ureq = { version = "3.4.2", features = ["json"] }
+velopack = "1.2.161"
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_Security_Cryptography",
+    "Win32_System_Console",
+    "Win32_System_DataExchange",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_Accessibility",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+wry = "0.57.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[build-dependencies]
+embed-resource = "3.0.12"

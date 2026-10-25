@@ -1,0 +1,52 @@
+Mew - fully local dictation for Windows
+Released under the MIT License.
+
+Mew runs entirely on your computer. Audio and text never leave it.
+On first run Mew downloads two models from Hugging Face (huggingface.co).
+
+Third-party software and models
+===============================
+
+Parakeet TDT 0.6B v3 (speech recognition)
+  NVIDIA. License: CC-BY-4.0. https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+  ONNX export by Ilya Stupakov: https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx
+
+onnx-asr (NeMo feature extractor, built into mew.exe)
+  Copyright (c) 2025 Ilya Stupakov. License: MIT. https://github.com/istupakov/onnx-asr
+
+Qwen3.5 2B Instruct (text cleanup)
+  Alibaba Qwen team. License: Apache-2.0. https://huggingface.co/Qwen
+  GGUF quantization by Unsloth: https://huggingface.co/unsloth/Qwen3.5-2B-GGUF
+
+llama.cpp / ggml (llama-server, in the "llama" folder)
+  Copyright (c) 2023-2026 The ggml authors. License: MIT. https://github.com/ggml-org/llama.cpp
+
+LLVM OpenMP runtime (libomp.dll)
+  Apache License v2.0 with LLVM Exceptions. See llama\LICENSE-LLVM-OpenMP.
+
+ONNX Runtime (built into mew.exe)
+  Copyright (c) Microsoft Corporation. License: MIT. https://github.com/microsoft/onnxruntime
+
+Microsoft Visual C++ Runtime (msvcp140*.dll, vcruntime140*.dll)
+  Copyright (c) Microsoft Corporation. Redistributed under the Visual Studio license terms.
+
+Rust crates (built into mew.exe)
+  ort, cpal, tiny-skia, ab_glyph, tray-icon, muda, ureq, velopack, serde, sha2, windows-sys, anyhow, log
+  and their dependencies, under the MIT and/or Apache-2.0 licenses.
+
+MIT License (Mew, llama.cpp, onnx-asr, ONNX Runtime)
+----------------------------------------------------
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
