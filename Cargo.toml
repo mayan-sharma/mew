@@ -1,6 +1,6 @@
 [package]
 name = "mew"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Hold a key, talk, and Mew types it. Fully local dictation for Windows."
 license = "MIT"
@@ -20,6 +20,7 @@ tiny-skia = "0.12.0"
 tray-icon = "0.26.1"
 ureq = { version = "3.4.2", features = ["json"] }
 velopack = "1.2.161"
+windows = { version = "0.62.2", features = ["Win32_System_Com", "Win32_UI_Accessibility"] }
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",

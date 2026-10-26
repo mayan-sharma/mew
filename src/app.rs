@@ -19,12 +19,13 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 use crate::asr::Parakeet;
 use crate::audio::{Recorder, SAMPLE_RATE};
 use crate::config::{self, Hotkey, KeepHistory, Settings};
+use crate::learn::{self, Fix};
 use crate::llm::Cleaner;
 use crate::models::{self, Model};
 use crate::overlay::Overlay;
 use crate::tray::Tray;
 use crate::ui::Ui;
-use crate::{api, audio, history, hotkey, paste, system, update, watchdog};
+use crate::{api, audio, edits, history, hotkey, paste, system, update, watchdog};
 
 const TAP: Duration = Duration::from_millis(300); // shorter presses are taps, not dictation
 const DOUBLE_TAP: Duration = Duration::from_millis(500); // tap, then tap again within this = hands-free
@@ -48,6 +49,7 @@ pub enum Command {
     SetCleanup(bool),
     SetAutostart(bool),
     SetHistory(KeepHistory),
+    SetLearn(bool),
     /// Open the Mew window on a page ("overview", "history", "dictionary", "settings").
     Open(&'static str),
     Quit,
@@ -205,6 +207,7 @@ pub fn apply(command: Command, settings: &Mutex<Settings>, overlay: &Overlay, qu
             say(if on { "I'll tidy up your words." } else { "I'll type exactly what I hear." });
         }
         Command::SetAutostart(on) => system::set_autostart(on),
+        Command::SetLearn(on) => s.learn = on,
         Command::SetHistory(keep) => {
             s.history = keep;
             if let Err(e) = history::prune(keep) {
@@ -369,6 +372,7 @@ fn worker(
             continue;
         }
         let text = if CLEANUP_ON.load(Ordering::Relaxed) { cleaner.clean(&raw) } else { raw.clone() };
+        let text = learn::apply(&text, &history::fixes().unwrap_or_default()); // spellings learned from your edits
         let t2 = Instant::now();
 
         // Back-to-back dictations into the same window get a joining space.
@@ -384,6 +388,11 @@ fn worker(
         }
         last_paste = Some((window, Instant::now(), text.clone()));
         show(&|| overlay.say(&text));
+
+        if settings.lock().unwrap().learn {
+            let (overlay, pushes) = (overlay.clone(), pushes.clone());
+            edits::watch(text.clone(), move |fixes| remember(&fixes, &overlay, &pushes, main_thread));
+        }
 
         let keep_text = settings.lock().unwrap().history != KeepHistory::Off;
         let saved = history::add(&history::NewEntry {
@@ -413,6 +422,30 @@ fn worker(
             text.split_whitespace().count()
         );
     }
+}
+
+/// Saves spelling fixes learned from the user's edits and lets them know.
+fn remember(fixes: &[Fix], overlay: &Overlay, pushes: &Sender<Value>, main_thread: u32) {
+    let mut terms = config::dictionary();
+    for fix in fixes {
+        if let Err(e) = history::add_fix(fix) {
+            log::warn!("saving a learned fix failed: {e:#}");
+            return;
+        }
+        if !terms.iter().any(|t| t.eq_ignore_ascii_case(&fix.fixed)) {
+            terms.push(fix.fixed.clone());
+        }
+    }
+    config::set_dictionary(&terms);
+    log::info!("learned {} spelling fix(es) from an edit", fixes.len());
+    if !RECORDING.load(Ordering::Relaxed) {
+        match fixes {
+            [one] => overlay.say(&format!("Noted! I'll write “{}” from now on.", one.fixed)),
+            _ => overlay.say("Noted! I'll remember those spellings."),
+        }
+    }
+    let _ = pushes.send(json!({ "type": "dictionary" }));
+    unsafe { PostThreadMessageW(main_thread, WM_NULL, 0, 0) };
 }
 
 fn load_models(events: Sender<AppEvent>, jobs: Sender<Job>, overlay: Overlay, hotkey: Hotkey, first_run: bool) {

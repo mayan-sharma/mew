@@ -9,6 +9,7 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 
 use crate::config;
+use crate::learn::Fix;
 
 static DB: OnceLock<Mutex<Connection>> = OnceLock::new();
 
@@ -58,7 +59,12 @@ pub fn init() -> Result<()> {
              latency_ms INTEGER NOT NULL,
              cleaned INTEGER NOT NULL
          );
-         CREATE INDEX IF NOT EXISTS dictations_at ON dictations(at);",
+         CREATE INDEX IF NOT EXISTS dictations_at ON dictations(at);
+         CREATE TABLE IF NOT EXISTS learned (
+             heard TEXT PRIMARY KEY COLLATE NOCASE,
+             fixed TEXT NOT NULL,
+             at INTEGER NOT NULL
+         );",
     )?;
     DB.set(Mutex::new(db)).ok();
     Ok(())
@@ -142,6 +148,44 @@ pub fn prune(keep: config::KeepHistory) -> Result<()> {
         db.execute("UPDATE dictations SET text = NULL, raw = NULL WHERE at < ?1 AND text IS NOT NULL", [cutoff])
             .map(drop)
     })
+}
+
+#[derive(Serialize)]
+pub struct Learned {
+    pub heard: String,
+    pub fixed: String,
+    pub at: i64,
+}
+
+/// Remembers a spelling fix learned from the user's edits (a newer fix for the same phrase wins).
+pub fn add_fix(fix: &Fix) -> Result<()> {
+    with(|db| {
+        db.execute(
+            "INSERT OR REPLACE INTO learned (heard, fixed, at) VALUES (?1, ?2, ?3)",
+            params![fix.heard, fix.fixed, now_ms()],
+        )
+        .map(drop)
+    })
+}
+
+pub fn fixes() -> Result<Vec<Fix>> {
+    with(|db| {
+        db.prepare("SELECT heard, fixed FROM learned ORDER BY length(heard) DESC")?
+            .query_map([], |r| Ok(Fix { heard: r.get(0)?, fixed: r.get(1)? }))?
+            .collect()
+    })
+}
+
+pub fn learned() -> Result<Vec<Learned>> {
+    with(|db| {
+        db.prepare("SELECT heard, fixed, at FROM learned ORDER BY at DESC")?
+            .query_map([], |r| Ok(Learned { heard: r.get(0)?, fixed: r.get(1)?, at: r.get(2)? }))?
+            .collect()
+    })
+}
+
+pub fn forget_fix(heard: &str) -> Result<()> {
+    with(|db| db.execute("DELETE FROM learned WHERE heard = ?1", [heard]).map(drop))
 }
 
 #[derive(Serialize, Default)]
@@ -255,6 +299,14 @@ pub fn seed_demo() -> Result<()> {
     ];
     let now = now_ms();
     with(|db| {
+        for (heard, fixed, ago) in
+            [("cooper netties", "Kubernetes", 3_600_000i64), ("velo pack", "Velopack", 86_400_000)]
+        {
+            db.execute(
+                "INSERT OR REPLACE INTO learned (heard, fixed, at) VALUES (?1, ?2, ?3)",
+                params![heard, fixed, now - ago],
+            )?;
+        }
         for day in 0..24i64 {
             if day % 7 == 5 {
                 continue; // a few empty days

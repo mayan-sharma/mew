@@ -52,17 +52,22 @@ pub fn handle(method: &str, params: &Value, ctx: &mut Ctx) -> Result<Value> {
                 "cleanup" => Command::SetCleanup(value.as_bool().context("bool")?),
                 "autostart" => Command::SetAutostart(value.as_bool().context("bool")?),
                 "history" => Command::SetHistory(parse(value)?),
+                "learn" => Command::SetLearn(value.as_bool().context("bool")?),
                 key => bail!("unknown setting {key}"),
             };
             apply(command, ctx.settings, ctx.overlay, true);
             ctx.tray.sync(&ctx.settings.lock().unwrap());
             settings_json(ctx)
         }
-        "dictionary" => json!({ "terms": config::dictionary() }),
+        "dictionary" => dictionary_json()?,
         "setDictionary" => {
             let terms: Vec<String> = serde_json::from_value(params["terms"].clone())?;
             config::set_dictionary(&terms);
-            json!({ "terms": config::dictionary() })
+            dictionary_json()?
+        }
+        "forgetLearned" => {
+            history::forget_fix(params["heard"].as_str().context("heard")?)?;
+            dictionary_json()?
         }
         "open" => {
             let target = match params["target"].as_str().unwrap_or_default() {
@@ -87,6 +92,10 @@ pub fn handle(method: &str, params: &Value, ctx: &mut Ctx) -> Result<Value> {
     })
 }
 
+fn dictionary_json() -> Result<Value> {
+    Ok(json!({ "terms": config::dictionary(), "learned": history::learned()? }))
+}
+
 fn parse<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T> {
     Ok(serde_json::from_value(value.clone())?)
 }
@@ -99,6 +108,7 @@ fn settings_json(ctx: &Ctx) -> Value {
         "microphone": s.microphone,
         "microphones": *ctx.devices.lock().unwrap(),
         "cleanup": s.cleanup,
+        "learn": s.learn,
         "autostart": system::autostart_enabled(),
         "history": s.history,
         "historyOptions": KeepHistory::ALL.iter().map(|k| json!({ "id": k, "label": k.label() })).collect::<Vec<_>>(),

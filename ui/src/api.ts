@@ -35,6 +35,7 @@ export type Settings = {
   microphone: string | null;
   microphones: string[];
   cleanup: boolean;
+  learn: boolean;
   autostart: boolean;
   history: string;
   historyOptions: Option[];
@@ -42,9 +43,14 @@ export type Settings = {
   models: { name: string; role: string; ready: boolean }[];
 };
 
+export type Learned = { heard: string; fixed: string; at: number };
+
+export type Dictionary = { terms: string[]; learned: Learned[] };
+
 export type MewEvent =
   | { type: "dictation"; entry: Entry }
   | { type: "settings" }
+  | { type: "dictionary" }
   | { type: "navigate"; page: string };
 
 type Reply = { id: number; ok: boolean; data?: unknown; error?: string };

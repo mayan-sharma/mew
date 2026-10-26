@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use windows_sys::Win32::Foundation::{CloseHandle, HWND};
 use windows_sys::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
 use windows_sys::Win32::System::Registry::{
-    HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
+    HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_BINARY, RRF_RT_REG_SZ, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
 };
 use windows_sys::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
@@ -18,41 +18,60 @@ use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use crate::overlay::wide;
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+/// Where Windows records the on/off switch from Settings > Apps > Startup (and Task Manager's Startup tab).
+const APPROVED_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 const RUN_VALUE: &str = "Mew";
 
+/// Mew starts at sign-in only if its Run entry exists and Windows' Startup Apps switch isn't off.
 pub fn autostart_enabled() -> bool {
-    let (key, value) = (wide(RUN_KEY), wide(RUN_VALUE));
+    let (run, approved, value) = (wide(RUN_KEY), wide(APPROVED_KEY), wide(RUN_VALUE));
     let mut size = 0u32;
-    let status = unsafe {
+    let registered = unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,
-            key.as_ptr(),
+            run.as_ptr(),
             value.as_ptr(),
             RRF_RT_REG_SZ,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             &mut size,
         )
-    };
-    status == 0
+    } == 0;
+    // StartupApproved holds 12 bytes; the first byte is 2 (or 6) when allowed and 3 (or 7) when switched off.
+    let mut flags = [0u8; 12];
+    let mut len = flags.len() as u32;
+    let found = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            approved.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_BINARY,
+            std::ptr::null_mut(),
+            flags.as_mut_ptr().cast(),
+            &mut len,
+        )
+    } == 0;
+    registered && !(found && flags[0] & 1 == 1)
 }
 
+/// Turning it on from Mew also clears Windows' "off" switch for Mew, since that's what the user just asked for.
 pub fn set_autostart(enabled: bool) {
-    let (key, value) = (wide(RUN_KEY), wide(RUN_VALUE));
+    let (run, approved, value) = (wide(RUN_KEY), wide(APPROVED_KEY), wide(RUN_VALUE));
     let status = unsafe {
         if enabled {
+            RegDeleteKeyValueW(HKEY_CURRENT_USER, approved.as_ptr(), value.as_ptr());
             let exe = std::env::current_exe().unwrap_or_default();
             let command = wide(&format!("\"{}\"", exe.display()));
             RegSetKeyValueW(
                 HKEY_CURRENT_USER,
-                key.as_ptr(),
+                run.as_ptr(),
                 value.as_ptr(),
                 REG_SZ,
                 command.as_ptr().cast(),
                 (command.len() * 2) as u32,
             )
         } else {
-            RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), value.as_ptr())
+            RegDeleteKeyValueW(HKEY_CURRENT_USER, run.as_ptr(), value.as_ptr())
         }
     };
     if status != 0 && enabled {

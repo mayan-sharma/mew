@@ -51,6 +51,10 @@ export function SettingsPage() {
           description="Removes ums, applies “no wait, I mean…” corrections and fixes punctuation. Off types exactly what was heard.">
           <Toggle label="Tidy up with AI" checked={s.cleanup} onChange={(v) => set("cleanup", v)} />
         </Row>
+        <Row title="Learn from my edits"
+          description="After Mew types, it watches that text box for 30 seconds. If you fix a word, Mew uses your spelling next time. Never reads password fields.">
+          <Toggle label="Learn from my edits" checked={s.learn} onChange={(v) => set("learn", v)} />
+        </Row>
       </section>
 
       <section class="settings-group" aria-labelledby="privacy">

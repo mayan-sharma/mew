@@ -261,6 +261,17 @@ h2 { font: 600 16px/1.3 var(--font-display); }
 }
 .term-remove:hover { background: var(--sunken); color: var(--ink); }
 
+.learned-section { margin-top: 36px; }
+.learned { list-style: none; margin: 0; padding: 0; }
+.learned li {
+  display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 12px;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.learned-pair { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 8px; user-select: text; }
+.learned-heard { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
+.learned-arrow { color: var(--muted); }
+.learned-when { font-size: 12px; }
+
 /* Settings */
 .settings-group { margin-bottom: 32px; }
 .settings-group h2 { margin-bottom: 4px; }

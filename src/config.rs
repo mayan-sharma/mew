@@ -110,13 +110,22 @@ pub struct Settings {
     pub cleanup: bool,
     /// How long to keep transcript text.
     pub history: KeepHistory,
+    /// Watch the text box after typing and learn spelling fixes the user makes.
+    pub learn: bool,
     /// First-run setup (autostart, dictionary, welcome) has happened.
     pub welcomed: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { hotkey: Hotkey::RightAlt, microphone: None, cleanup: true, history: KeepHistory::Month, welcomed: false }
+        Self {
+            hotkey: Hotkey::RightAlt,
+            microphone: None,
+            cleanup: true,
+            history: KeepHistory::Month,
+            learn: true,
+            welcomed: false,
+        }
     }
 }
 

@@ -50,7 +50,7 @@ export function App() {
       <main class="content" key={page}>
         {page === "overview" && <OverviewPage go={go} />}
         {page === "history" && <HistoryPage go={go} />}
-        {page === "dictionary" && <DictionaryPage />}
+        {page === "dictionary" && <DictionaryPage go={go} />}
         {page === "settings" && <SettingsPage />}
       </main>
       <Toasts />

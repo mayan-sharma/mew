@@ -23,6 +23,8 @@ The **Mew window** has four pages:
 
 **AI tidy-up** removes "um"s, applies "no wait, I mean…" corrections and fixes punctuation. Turn it off to get exactly what was heard.
 
+**Learn from my edits**: after Mew types, it watches that one text box for 30 seconds (via UI Automation, never password fields). If you fix a misheard word, say "cooper netties" to "Kubernetes", Mew remembers the pair, replaces it in future dictations (even with tidy-up off) and adds the word to your dictionary. Rewrites, added words and swaps to everyday words are ignored. Learned pairs are listed, and removable, on the Dictionary page.
+
 ## Install
 
 Run `Mew-win-Setup.exe`. No admin prompt. Mew starts, downloads its models once (about 1.9 GB, with progress shown by the cat) and starts with Windows from then on. Uninstall from Windows Settings > Apps, which also removes the models.
@@ -66,6 +68,11 @@ Developer commands (`mew.exe <flag>`):
 `MEW_DATA_DIR` points Mew at a different data folder (settings, history, models, logs) for development.
 
 Running from `target\release` needs `MEW_LLAMA_DIR` pointing at a folder with `llama-server.exe` (the package script stages it into `llama\` next to `mew.exe`).
+
+## CI and releases
+
+- **CI** (`.github/workflows/ci.yml`): every push to `main` and every PR builds the UI, then runs `cargo fmt --check`, `cargo clippy -D warnings` and the tests on Windows.
+- **Release** (`.github/workflows/release.yml`): push a tag matching Cargo.toml's version (`git tag v0.3.0; git push --tags`) to build the installer and publish a GitHub Release with the Velopack files. Run it manually from the Actions tab to just build the installer as a downloadable artifact.
 
 ## Before a public release
 
