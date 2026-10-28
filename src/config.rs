@@ -10,8 +10,12 @@ pub fn data_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("MEW_DATA_DIR") {
         return dir.into();
     }
-    let base = std::env::var_os("LOCALAPPDATA").map_or_else(std::env::temp_dir, PathBuf::from);
-    base.join("Mew Data")
+    let base = |var| std::env::var_os(var).map_or_else(std::env::temp_dir, PathBuf::from);
+    if cfg!(windows) {
+        base("LOCALAPPDATA").join("Mew Data")
+    } else {
+        base("HOME").join("Library/Application Support/Mew")
+    }
 }
 
 pub fn models_dir() -> PathBuf {
@@ -26,7 +30,8 @@ pub fn dictionary_path() -> PathBuf {
     data_dir().join("dictionary.txt")
 }
 
-/// llama-server ships next to mew.exe; `MEW_LLAMA_DIR` overrides it for development.
+/// llama-server ships in a `llama` folder next to the executable (on macOS, in `Mew.app/Contents/MacOS`);
+/// `MEW_LLAMA_DIR` overrides it for development.
 pub fn llama_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("MEW_LLAMA_DIR") {
         return dir.into();
@@ -35,14 +40,17 @@ pub fn llama_dir() -> PathBuf {
     exe.parent().map(|p| p.join("llama")).unwrap_or_default()
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg(windows)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Hotkey {
+    #[default]
     RightAlt,
     RightCtrl,
     CapsLock,
     F8,
 }
 
+#[cfg(windows)]
 impl Hotkey {
     pub const ALL: [Hotkey; 4] = [Hotkey::RightAlt, Hotkey::RightCtrl, Hotkey::CapsLock, Hotkey::F8];
 
@@ -61,6 +69,38 @@ impl Hotkey {
             Hotkey::RightCtrl => "Right Ctrl",
             Hotkey::CapsLock => "Caps Lock",
             Hotkey::F8 => "F8",
+        }
+    }
+}
+
+/// Modifier keys only: macOS reports Caps Lock as a toggle and F-keys as media keys, so neither can be held.
+#[cfg(target_os = "macos")]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Hotkey {
+    #[default]
+    Fn,
+    RightOption,
+    RightCommand,
+}
+
+#[cfg(target_os = "macos")]
+impl Hotkey {
+    pub const ALL: [Hotkey; 3] = [Hotkey::Fn, Hotkey::RightOption, Hotkey::RightCommand];
+
+    /// The key's virtual keycode (`kVK_*`).
+    pub fn vk(self) -> u32 {
+        match self {
+            Hotkey::Fn => 0x3F,           // kVK_Function, also the Globe key
+            Hotkey::RightOption => 0x3D,  // kVK_RightOption
+            Hotkey::RightCommand => 0x36, // kVK_RightCommand
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Hotkey::Fn => "Fn",
+            Hotkey::RightOption => "Right Option",
+            Hotkey::RightCommand => "Right Command",
         }
     }
 }
@@ -104,7 +144,7 @@ impl KeepHistory {
 #[serde(default)]
 pub struct Settings {
     pub hotkey: Hotkey,
-    /// Microphone name; `None` follows the Windows default.
+    /// Microphone name; `None` follows the system default.
     pub microphone: Option<String>,
     /// Clean up transcripts with the local LLM.
     pub cleanup: bool,
@@ -119,7 +159,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            hotkey: Hotkey::RightAlt,
+            hotkey: Hotkey::default(),
             microphone: None,
             cleanup: true,
             history: KeepHistory::Month,

@@ -1,0 +1,208 @@
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HWND};
+use windows_sys::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
+use windows_sys::Win32::System::Registry::{
+    HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_BINARY, RRF_RT_REG_SZ, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
+};
+use windows_sys::Win32::System::Threading::{
+    CreateMutexW, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    QueryFullProcessImageNameW,
+};
+use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
+use windows_sys::Win32::UI::Shell::ShellExecuteW;
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    DispatchMessageW, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, MSG, PostThreadMessageW,
+    SW_SHOWNORMAL, TranslateMessage, WM_NULL,
+};
+
+use crate::overlay::wide;
+
+static MAIN_THREAD: AtomicU32 = AtomicU32::new(0);
+
+/// False if Mew is already running; that one is asked to open its window instead.
+pub fn first_instance() -> bool {
+    let name = wide("Local\\Mew.SingleInstance");
+    unsafe {
+        CreateMutexW(std::ptr::null(), 0, name.as_ptr());
+        if GetLastError() == ERROR_ALREADY_EXISTS {
+            crate::watchdog::signal_running_instance(); // launching again opens the Mew window
+            return false;
+        }
+    }
+    true
+}
+
+/// Process-wide setup, on the main thread before any window exists.
+pub fn init() {
+    MAIN_THREAD.store(unsafe { GetCurrentThreadId() }, Ordering::Relaxed);
+    unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+}
+
+/// The main thread's message loop, which the tray and the Mew window need. Calls `tick` after each message until it
+/// returns false.
+pub fn run_loop(mut tick: impl FnMut() -> bool) {
+    let mut msg: MSG = unsafe { std::mem::zeroed() };
+    while unsafe { GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) } > 0 {
+        crate::watchdog::MAIN.tick(1);
+        unsafe {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        if !tick() {
+            return;
+        }
+    }
+}
+
+/// Wakes `run_loop` from another thread, so it handles queued work.
+pub fn wake() {
+    unsafe { PostThreadMessageW(MAIN_THREAD.load(Ordering::Relaxed), WM_NULL, 0, 0) };
+}
+
+/// The window you're typing in.
+pub fn foreground_window() -> isize {
+    unsafe { GetForegroundWindow() as isize }
+}
+
+/// Installed by Velopack (lives in a `current` folder), as opposed to a dev build.
+pub fn is_installed() -> bool {
+    std::env::current_exe().ok().and_then(|e| Some(e.parent()?.file_name()? == "current")).unwrap_or(false)
+}
+
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+/// Where Windows records the on/off switch from Settings > Apps > Startup (and Task Manager's Startup tab).
+const APPROVED_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+const RUN_VALUE: &str = "Mew";
+
+/// Mew starts at sign-in only if its Run entry exists and Windows' Startup Apps switch isn't off.
+pub fn autostart_enabled() -> bool {
+    let (run, approved, value) = (wide(RUN_KEY), wide(APPROVED_KEY), wide(RUN_VALUE));
+    let mut size = 0u32;
+    let registered = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            run.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut size,
+        )
+    } == 0;
+    // StartupApproved holds 12 bytes; the first byte is 2 (or 6) when allowed and 3 (or 7) when switched off.
+    let mut flags = [0u8; 12];
+    let mut len = flags.len() as u32;
+    let found = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            approved.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_BINARY,
+            std::ptr::null_mut(),
+            flags.as_mut_ptr().cast(),
+            &mut len,
+        )
+    } == 0;
+    registered && !(found && flags[0] & 1 == 1)
+}
+
+/// Turning it on from Mew also clears Windows' "off" switch for Mew, since that's what the user just asked for.
+pub fn set_autostart(enabled: bool) {
+    let (run, approved, value) = (wide(RUN_KEY), wide(APPROVED_KEY), wide(RUN_VALUE));
+    let status = unsafe {
+        if enabled {
+            RegDeleteKeyValueW(HKEY_CURRENT_USER, approved.as_ptr(), value.as_ptr());
+            let exe = std::env::current_exe().unwrap_or_default();
+            let command = wide(&format!("\"{}\"", exe.display()));
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                run.as_ptr(),
+                value.as_ptr(),
+                REG_SZ,
+                command.as_ptr().cast(),
+                (command.len() * 2) as u32,
+            )
+        } else {
+            RegDeleteKeyValueW(HKEY_CURRENT_USER, run.as_ptr(), value.as_ptr())
+        }
+    };
+    if status != 0 && enabled {
+        log::warn!("could not update autostart: error {status}");
+    }
+}
+
+/// Friendly name of the app that owns a window ("Google Chrome"), from the exe's version info.
+pub fn app_name(window: isize) -> String {
+    static CACHE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+    let Some(path) = exe_path(window as HWND) else { return "Unknown app".into() };
+    let mut cache = CACHE.lock().unwrap();
+    let cache = cache.get_or_insert_with(HashMap::new);
+    if let Some(name) = cache.get(&path) {
+        return name.clone();
+    }
+    let stem = std::path::Path::new(&path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = file_description(&path).filter(|d| !d.trim().is_empty()).unwrap_or(stem);
+    cache.insert(path, name.clone());
+    name
+}
+
+fn exe_path(hwnd: HWND) -> Option<String> {
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return None;
+        }
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len);
+        CloseHandle(process);
+        (ok != 0).then(|| String::from_utf16_lossy(&buf[..len as usize]))
+    }
+}
+
+fn file_description(path: &str) -> Option<String> {
+    let wpath = wide(path);
+    unsafe {
+        let size = GetFileVersionInfoSizeW(wpath.as_ptr(), std::ptr::null_mut());
+        if size == 0 {
+            return None;
+        }
+        let mut data = vec![0u8; size as usize];
+        if GetFileVersionInfoW(wpath.as_ptr(), 0, size, data.as_mut_ptr().cast()) == 0 {
+            return None;
+        }
+        // Use the file's first declared language/codepage.
+        let (mut ptr, mut len) = (std::ptr::null_mut(), 0u32);
+        let translation = wide(r"\VarFileInfo\Translation");
+        if VerQueryValueW(data.as_ptr().cast(), translation.as_ptr(), &mut ptr, &mut len) == 0 || len < 4 {
+            return None;
+        }
+        let pair = std::slice::from_raw_parts(ptr as *const u16, 2);
+        let key = wide(&format!(r"\StringFileInfo\{:04x}{:04x}\FileDescription", pair[0], pair[1]));
+        if VerQueryValueW(data.as_ptr().cast(), key.as_ptr(), &mut ptr, &mut len) == 0 || len == 0 {
+            return None;
+        }
+        let text = std::slice::from_raw_parts(ptr as *const u16, len as usize);
+        Some(String::from_utf16_lossy(text).trim_end_matches('\0').trim().to_string())
+    }
+}
+
+/// Opens a file, folder, or `ms-settings:` URI with its default handler.
+pub fn open(target: &str) {
+    let (verb, target) = (wide("open"), wide(target));
+    unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            target.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+}

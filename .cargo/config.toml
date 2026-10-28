@@ -1,0 +1,3 @@
+# The oldest macOS the prebuilt ONNX Runtime supports; C dependencies and the app are built for the same. No effect on Windows.
+[env]
+MACOSX_DEPLOYMENT_TARGET = "13.4"

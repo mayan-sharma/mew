@@ -11,6 +11,14 @@ use crate::overlay::Overlay;
 use crate::tray::Tray;
 use crate::{history, models, paste, system, update};
 
+/// The licenses file, relative to the executable: next to mew.exe, in Mew.app's Resources folder on macOS.
+const NOTICES: &str = if cfg!(target_os = "macos") { "../Resources/NOTICE.txt" } else { "NOTICE.txt" };
+const MIC_PRIVACY: &str = if cfg!(target_os = "macos") {
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+} else {
+    "ms-settings:privacy-microphone"
+};
+
 pub struct Ctx<'a> {
     pub settings: &'a Arc<Mutex<Settings>>,
     pub overlay: &'a Overlay,
@@ -73,8 +81,8 @@ pub fn handle(method: &str, params: &Value, ctx: &mut Ctx) -> Result<Value> {
             let target = match params["target"].as_str().unwrap_or_default() {
                 "logs" => config::logs_dir().to_string_lossy().into_owned(),
                 "data" => config::data_dir().to_string_lossy().into_owned(),
-                "notices" => std::env::current_exe()?.with_file_name("NOTICE.txt").to_string_lossy().into_owned(),
-                "micPrivacy" => "ms-settings:privacy-microphone".into(),
+                "notices" => std::env::current_exe()?.with_file_name(NOTICES).to_string_lossy().into_owned(),
+                "micPrivacy" => MIC_PRIVACY.into(),
                 other => bail!("can't open {other}"),
             };
             system::open(&target);

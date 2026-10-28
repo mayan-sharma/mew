@@ -1,4 +1,4 @@
-Mew - fully local dictation for Windows
+Mew - fully local dictation for Windows and macOS
 Released under the MIT License.
 
 Mew runs entirely on your computer. Audio and text never leave it.
@@ -11,7 +11,7 @@ Parakeet TDT 0.6B v3 (speech recognition)
   NVIDIA. License: CC-BY-4.0. https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
   ONNX export by Ilya Stupakov: https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx
 
-onnx-asr (NeMo feature extractor, built into mew.exe)
+onnx-asr (NeMo feature extractor, built into Mew)
   Copyright (c) 2025 Ilya Stupakov. License: MIT. https://github.com/istupakov/onnx-asr
 
 Qwen3.5 2B Instruct (text cleanup)
@@ -21,18 +21,19 @@ Qwen3.5 2B Instruct (text cleanup)
 llama.cpp / ggml (llama-server, in the "llama" folder)
   Copyright (c) 2023-2026 The ggml authors. License: MIT. https://github.com/ggml-org/llama.cpp
 
-LLVM OpenMP runtime (libomp.dll)
+LLVM OpenMP runtime (libomp.dll, Windows)
   Apache License v2.0 with LLVM Exceptions. See llama\LICENSE-LLVM-OpenMP.
 
-ONNX Runtime (built into mew.exe)
+ONNX Runtime (built into Mew)
   Copyright (c) Microsoft Corporation. License: MIT. https://github.com/microsoft/onnxruntime
 
-Microsoft Visual C++ Runtime (msvcp140*.dll, vcruntime140*.dll)
+Microsoft Visual C++ Runtime (msvcp140*.dll, vcruntime140*.dll, Windows)
   Copyright (c) Microsoft Corporation. Redistributed under the Visual Studio license terms.
 
-Rust crates (built into mew.exe)
-  ort, cpal, tiny-skia, ab_glyph, tray-icon, muda, ureq, velopack, serde, sha2, windows-sys, anyhow, log
-  and their dependencies, under the MIT and/or Apache-2.0 licenses.
+Rust crates (built into Mew)
+  ort, cpal, tiny-skia, ab_glyph, tray-icon, muda, wry, ureq, velopack, serde, sha2, getrandom, windows-sys,
+  objc2 and its framework crates, dispatch2, libc, anyhow, log and their dependencies, under the MIT,
+  Apache-2.0 and/or Zlib licenses.
 
 MIT License (Mew, llama.cpp, onnx-asr, ONNX Runtime)
 ----------------------------------------------------

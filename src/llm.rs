@@ -1,29 +1,25 @@
 //! Transcript cleanup with a small local LLM served by a bundled llama-server.
-//! Mew owns the process: started on demand, stopped after 10 idle minutes, killed with Mew (job object).
+//! Mew owns the process: started on demand, stopped after 10 idle minutes, and it ends with Mew even if Mew crashes
+//! (a job object on Windows, a watching shell on macOS).
 
-use std::os::windows::io::AsRawHandle;
-use std::os::windows::process::CommandExt;
+use std::ffi::OsStr;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-use windows_sys::Win32::Security::Cryptography::{BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom};
-use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject,
-};
 
 use crate::config;
+
+#[cfg_attr(windows, path = "llm/windows.rs")]
+#[cfg_attr(target_os = "macos", path = "llm/macos.rs")]
+mod platform;
 
 const IDLE_TTL: Duration = Duration::from_secs(600);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 const MIN_WORDS: usize = 4; // shorter dictations are pasted as transcribed (Parakeet already punctuates)
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const SYSTEM: &str = "You are a dictation cleanup filter, not an assistant. Each user message is raw speech-to-text of something the user wants to TYPE.
 Rewrite it as the clean text they meant to type, and output only that text.
@@ -47,23 +43,12 @@ const EXAMPLES: [(&str, &str); 7] = [
     ("i i think we should like ship it today you know", "I think we should ship it today."),
 ];
 
+/// Dropping it ends llama-server.
 struct Server {
-    child: Child,
-    job: HANDLE,
+    process: platform::Process,
     url: String,
     key: String,
 }
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        unsafe { CloseHandle(self.job) };
-    }
-}
-
-// The job handle is only used from whichever thread holds the mutex.
-unsafe impl Send for Server {}
 
 #[derive(Clone)]
 pub struct Cleaner {
@@ -138,7 +123,7 @@ impl Cleaner {
             Err(e) => {
                 log::warn!("cleanup failed; pasting the transcript: {e:#}");
                 let mut server = self.server.lock().unwrap();
-                if server.as_mut().is_some_and(|s| !matches!(s.child.try_wait(), Ok(None))) {
+                if server.as_mut().is_some_and(|s| !matches!(s.process.try_wait(), Ok(None))) {
                     *server = None; // crashed; restarts on the next key press
                 }
                 text.to_string()
@@ -163,26 +148,21 @@ impl Cleaner {
     }
 
     fn start(&self) -> Result<Server> {
-        let exe = config::llama_dir().join("llama-server.exe");
-        let port = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+        let exe = config::llama_dir().join(format!("llama-server{}", std::env::consts::EXE_SUFFIX));
+        let port = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port().to_string();
         let key = random_key();
         std::fs::create_dir_all(config::logs_dir())?;
         let log = std::fs::File::create(config::logs_dir().join("llama.log"))?;
-        let child = Command::new(&exe)
-            .args(["-m".as_ref(), self.model.as_os_str()])
-            .args(["-ngl", "99", "-c", "4096", "-np", "1", "--host", "127.0.0.1"])
-            .args(["--port", &port.to_string(), "--api-key", &key, "--reasoning", "off", "--no-webui"])
-            .stdout(Stdio::from(log.try_clone()?))
-            .stderr(Stdio::from(log))
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .with_context(|| format!("starting {}", exe.display()))?;
-        let job = kill_with_parent(&child)?;
-        let mut server = Server { child, job, url: format!("http://127.0.0.1:{port}"), key };
+        let mut args = vec![OsStr::new("-m"), self.model.as_os_str()];
+        args.extend(["-ngl", "99", "-c", "4096", "-np", "1", "--host", "127.0.0.1"].map(OsStr::new));
+        args.extend(["--port", &port, "--api-key", &key, "--reasoning", "off", "--no-webui"].map(OsStr::new));
+        let process =
+            platform::Process::spawn(&exe, &args, log).with_context(|| format!("starting {}", exe.display()))?;
+        let mut server = Server { process, url: format!("http://127.0.0.1:{port}"), key };
 
         let deadline = Instant::now() + Duration::from_secs(120);
         loop {
-            if let Ok(Some(status)) = server.child.try_wait() {
+            if let Ok(Some(status)) = server.process.try_wait() {
                 bail!("llama-server exited with {status}; see logs/llama.log");
             }
             if ureq::get(format!("{}/health", server.url)).call().is_ok_and(|r| r.status() == 200) {
@@ -212,29 +192,9 @@ fn messages(text: &str) -> Value {
     Value::Array(msgs)
 }
 
-/// Puts the child in a job that Windows kills when Mew's handle closes, even if Mew crashes.
-fn kill_with_parent(child: &Child) -> Result<HANDLE> {
-    unsafe {
-        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-        if job.is_null() {
-            bail!("CreateJobObject failed");
-        }
-        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        SetInformationJobObject(
-            job,
-            JobObjectExtendedLimitInformation,
-            &info as *const _ as *const _,
-            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-        );
-        AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE);
-        Ok(job)
-    }
-}
-
 /// Per-launch API key from the OS RNG so other local programs can't use the server.
 fn random_key() -> String {
     let mut bytes = [0u8; 16];
-    unsafe { BCryptGenRandom(std::ptr::null_mut(), bytes.as_mut_ptr(), 16, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
+    let _ = getrandom::fill(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
