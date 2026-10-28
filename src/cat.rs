@@ -1,4 +1,4 @@
-//! Draws Mew: the pill, the cat, sound bars, thinking dots and speech bubbles. Pure drawing, no Windows code.
+//! Draws Mew: the pill, the cat, sound bars, thinking dots and speech bubbles. Pure drawing, no OS code.
 
 use ab_glyph::{Font, FontArc, PxScale, ScaleFont, point};
 use tiny_skia::{FillRule, LineCap, Paint, Path, PathBuilder, Pixmap, Rect, Stroke, Transform};
@@ -59,10 +59,8 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new() -> Self {
-        let fonts = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into()) + r"\Fonts\";
-        let font = ["segoeui.ttf", "arial.ttf"]
-            .iter()
-            .find_map(|name| std::fs::read(format!("{fonts}{name}")).ok().and_then(|b| FontArc::try_from_vec(b).ok()));
+        let font =
+            font_paths().iter().find_map(|path| std::fs::read(path).ok().and_then(|b| FontArc::try_from_vec(b).ok()));
         Self { font }
     }
 
@@ -207,6 +205,18 @@ impl Renderer {
     }
 }
 
+/// System fonts for the bubble text, best first.
+#[cfg(windows)]
+fn font_paths() -> Vec<String> {
+    let fonts = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into()) + r"\Fonts\";
+    ["segoeui.ttf", "arial.ttf"].iter().map(|name| format!("{fonts}{name}")).collect()
+}
+
+#[cfg(target_os = "macos")]
+fn font_paths() -> Vec<String> {
+    ["/System/Library/Fonts/SFNS.ttf", "/System/Library/Fonts/Helvetica.ttc"].map(String::from).into()
+}
+
 fn icon_pixmap(size: u32) -> Pixmap {
     let mut c = Canvas::new(size, size, size as f32 / 32.0);
     draw_cat(&mut c, 16.0, 19.0, 21.0, Mode::Listening, 0.0);
@@ -247,6 +257,34 @@ pub fn icon_ico() -> Vec<u8> {
         ico.extend(png);
     }
     ico
+}
+
+/// .icns (PNG entries, 16 to 1024 px) for the macOS app bundle.
+pub fn icon_icns() -> Vec<u8> {
+    let entries = [
+        (b"icp4", 16),
+        (b"icp5", 32),
+        (b"ic11", 32),
+        (b"icp6", 64),
+        (b"ic12", 64),
+        (b"ic07", 128),
+        (b"ic13", 256),
+        (b"ic08", 256),
+        (b"ic14", 512),
+        (b"ic09", 512),
+        (b"ic10", 1024),
+    ];
+    let mut body = Vec::new();
+    for (kind, size) in entries {
+        let png = icon_png(size);
+        body.extend(kind);
+        body.extend((png.len() as u32 + 8).to_be_bytes());
+        body.extend(png);
+    }
+    let mut icns = b"icns".to_vec();
+    icns.extend((body.len() as u32 + 8).to_be_bytes());
+    icns.extend(body);
+    icns
 }
 
 struct Canvas {

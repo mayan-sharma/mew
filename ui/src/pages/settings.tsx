@@ -3,6 +3,9 @@ import { type Settings, call, onEvent } from "../api";
 import { Confirm, Row, Segmented, Toggle } from "../components/controls";
 import { Icon } from "../components/icons";
 import { toast } from "../components/toast";
+import { device, mac } from "../platform";
+
+const startAtLogin = mac ? "Open at login" : "Start with Windows";
 
 export function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
@@ -43,7 +46,7 @@ export function SettingsPage() {
         <Row title="Microphone" htmlFor="mic">
           <select id="mic" class="select" value={s.microphone ?? ""}
             onChange={(e) => set("microphone", e.currentTarget.value || null)}>
-            <option value="">Windows default</option>
+            <option value="">{mac ? "System default" : "Windows default"}</option>
             {s.microphones.map((m) => <option value={m}>{m}</option>)}
           </select>
         </Row>
@@ -59,7 +62,7 @@ export function SettingsPage() {
 
       <section class="settings-group" aria-labelledby="privacy">
         <h2 id="privacy">History and privacy</h2>
-        <p class="group-note">Everything stays on this PC. Audio is never saved, and nothing is sent anywhere.</p>
+        <p class="group-note">Everything stays on this {device}. Audio is never saved, and nothing is sent anywhere.</p>
         <Row title="Keep transcripts" htmlFor="keep" description="Word counts and stats are kept either way.">
           <select id="keep" class="select" value={s.history} onChange={(e) => set("history", e.currentTarget.value)}>
             {s.historyOptions.map((o) => <option value={o.id}>{o.label}</option>)}
@@ -75,8 +78,8 @@ export function SettingsPage() {
 
       <section class="settings-group" aria-labelledby="general">
         <h2 id="general">General</h2>
-        <Row title="Start with Windows">
-          <Toggle label="Start with Windows" checked={s.autostart} onChange={(v) => set("autostart", v)} />
+        <Row title={startAtLogin}>
+          <Toggle label={startAtLogin} checked={s.autostart} onChange={(v) => set("autostart", v)} />
         </Row>
         <Row title="Updates" description={`You're on Mew ${s.version}.`}>
           <button type="button" class="button" onClick={() => call("checkUpdates")}>Check for updates</button>

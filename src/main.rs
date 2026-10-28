@@ -25,22 +25,28 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+#[cfg(windows)]
 use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
-use windows_sys::Win32::System::Threading::CreateMutexW;
-use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 
 fn main() {
-    velopack::VelopackApp::build()
-        .on_before_uninstall_fast_callback(|_| {
+    let mut velopack = velopack::VelopackApp::build();
+    // macOS apps have no uninstaller; Mew.app is dragged to the Trash.
+    #[cfg(windows)]
+    {
+        velopack = velopack.on_before_uninstall_fast_callback(|_| {
             system::set_autostart(false);
             let _ = std::fs::remove_dir_all(config::data_dir()); // models, settings, logs
-        })
-        .run();
+        });
+    }
+    velopack.run();
 
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // Older macOS hands apps opened from Finder a -psn_ argument.
+    let args: Vec<String> = std::env::args().skip(1).filter(|a| !a.starts_with("-psn_")).collect();
     if !args.is_empty() {
-        unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+        #[cfg(windows)]
+        unsafe {
+            AttachConsole(ATTACH_PARENT_PROCESS)
+        };
         logger::init(true);
         if let Err(e) = cli(&args) {
             eprintln!("error: {e:#}");
@@ -49,15 +55,10 @@ fn main() {
         return;
     }
 
-    let name = overlay::wide("Local\\Mew.SingleInstance");
-    unsafe {
-        CreateMutexW(std::ptr::null(), 0, name.as_ptr());
-        if GetLastError() == ERROR_ALREADY_EXISTS {
-            watchdog::signal_running_instance(); // launching again opens the Mew window
-            return;
-        }
-        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    if !system::first_instance() {
+        return;
     }
+    system::init();
     logger::init(false);
     log::info!("Mew {} starting", env!("CARGO_PKG_VERSION"));
     if let Err(e) = app::run() {
@@ -85,7 +86,11 @@ fn cli(args: &[String]) -> Result<()> {
         }
         ["--render", dir] => render_states(Path::new(dir)),
         ["--write-icon", path] => std::fs::write(path, cat::icon_ico()).context("writing icon"),
-        _ => bail!("usage: mew [--download | --selftest <16k-mono.wav> | --render <dir> | --write-icon <file.ico>]"),
+        ["--write-icns", path] => std::fs::write(path, cat::icon_icns()).context("writing icon"),
+        _ => bail!(
+            "usage: mew [--download | --selftest <16k-mono.wav> | --render <dir> | --write-icon <file.ico> | \
+             --write-icns <file.icns>]"
+        ),
     }
 }
 

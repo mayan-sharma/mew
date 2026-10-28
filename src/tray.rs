@@ -8,6 +8,13 @@ use crate::app::Command;
 use crate::config::{Hotkey, Settings};
 use crate::{cat, system};
 
+/// A click on a macOS menu bar item opens its menu; on Windows it opens the Mew window.
+pub const MENU_ON_CLICK: bool = cfg!(target_os = "macos");
+const AUTOSTART: &str = if cfg!(target_os = "macos") { "Open at login" } else { "Start with Windows" };
+const DEFAULT_MIC: &str = if cfg!(target_os = "macos") { "System default" } else { "Windows default" };
+/// Pixels; macOS shows it at up to 22 points, so it needs 2x pixels for Retina screens.
+const ICON_SIZE: u32 = if cfg!(target_os = "macos") { 64 } else { 32 };
+
 pub struct Tray {
     _icon: TrayIcon,
     title: MenuItem,
@@ -31,8 +38,7 @@ impl Tray {
         }
         let mics = Submenu::new("Microphone", true);
         let cleanup = CheckMenuItem::with_id("cleanup", "Tidy up text with AI", true, settings.cleanup, None);
-        let autostart =
-            CheckMenuItem::with_id("autostart", "Start with Windows", true, system::autostart_enabled(), None);
+        let autostart = CheckMenuItem::with_id("autostart", AUTOSTART, true, system::autostart_enabled(), None);
         let menu = Menu::new();
         menu.append_items(&[
             &MenuItem::with_id("open", "Open Mew", true, None),
@@ -48,10 +54,10 @@ impl Tray {
         ])?;
         let icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_menu_on_left_click(false) // left click opens the window
+            .with_menu_on_left_click(MENU_ON_CLICK) // otherwise left click opens the window
             .with_menu_on_right_click(true)
             .with_tooltip(title_text(settings.hotkey))
-            .with_icon(Icon::from_rgba(cat::icon_rgba(32), 32, 32)?)
+            .with_icon(Icon::from_rgba(cat::icon_rgba(ICON_SIZE), ICON_SIZE, ICON_SIZE)?)
             .build()?;
         let mut tray = Self { _icon: icon, title, hotkeys, mics, mic_items: Vec::new(), cleanup, autostart };
         tray.refresh_mics(&[], settings.microphone.as_deref());
@@ -68,8 +74,8 @@ impl Tray {
             let _ = self.mics.remove(&item);
         }
         let selected = selected.filter(|s| names.iter().any(|n| n == s));
-        let entries = std::iter::once((None, "Windows default".to_string()))
-            .chain(names.iter().map(|n| (Some(n.clone()), n.clone())));
+        let entries =
+            std::iter::once((None, DEFAULT_MIC.to_string())).chain(names.iter().map(|n| (Some(n.clone()), n.clone())));
         for (i, (name, label)) in entries.enumerate() {
             let item = CheckMenuItem::with_id(format!("mic:{i}"), &label, true, name.as_deref() == selected, None);
             let _ = self.mics.append(&item);

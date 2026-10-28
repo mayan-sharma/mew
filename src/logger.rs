@@ -5,7 +5,6 @@ use std::io::Write;
 use std::sync::Mutex;
 
 use log::{LevelFilter, Log, Metadata, Record};
-use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 
 use crate::config;
 
@@ -23,20 +22,9 @@ impl Log for FileLogger {
         if !self.enabled(record.metadata()) {
             return;
         }
-        let t = unsafe {
-            let mut t = std::mem::zeroed();
-            GetLocalTime(&mut t);
-            t
-        };
+        let [year, month, day, hour, minute, second, ms] = local_time();
         let line = format!(
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03} {:5} {}\n",
-            t.wYear,
-            t.wMonth,
-            t.wDay,
-            t.wHour,
-            t.wMinute,
-            t.wSecond,
-            t.wMilliseconds,
+            "{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}.{ms:03} {:5} {}\n",
             record.level(),
             record.args()
         );
@@ -49,6 +37,31 @@ impl Log for FileLogger {
     }
 
     fn flush(&self) {}
+}
+
+/// Year, month, day, hour, minute, second, millisecond.
+#[cfg(windows)]
+fn local_time() -> [u32; 7] {
+    let t = unsafe {
+        let mut t = std::mem::zeroed();
+        windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut t);
+        t
+    };
+    [t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond, t.wMilliseconds].map(u32::from)
+}
+
+#[cfg(target_os = "macos")]
+fn local_time() -> [u32; 7] {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let secs = now.as_secs() as libc::time_t;
+    let t = unsafe {
+        let mut t: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&secs, &mut t);
+        t
+    };
+    let [y, mo, d, h, mi, s] =
+        [t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec].map(|v| v as u32);
+    [y, mo, d, h, mi, s, now.subsec_millis()]
 }
 
 /// `echo` also prints log lines to the console (command-line runs).

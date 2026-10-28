@@ -7,6 +7,7 @@ import { DictionaryPage } from "./pages/dictionary";
 import { HistoryPage } from "./pages/history";
 import { OverviewPage } from "./pages/overview";
 import { SettingsPage } from "./pages/settings";
+import { device } from "./platform";
 
 const PAGES: { id: string; label: string; icon: IconName }[] = [
   { id: "overview", label: "Overview", icon: "overview" },
@@ -45,7 +46,7 @@ export function App() {
             </li>
           ))}
         </ul>
-        <p class="sidebar-foot">Runs entirely on this PC.</p>
+        <p class="sidebar-foot">Runs entirely on this {device}.</p>
       </nav>
       <main class="content" key={page}>
         {page === "overview" && <OverviewPage go={go} />}

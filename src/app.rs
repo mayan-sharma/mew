@@ -10,11 +10,6 @@ use anyhow::Result;
 use serde_json::{Value, json};
 use tray_icon::menu::MenuEvent;
 use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
-use windows_sys::Win32::Foundation::HWND;
-use windows_sys::Win32::System::Threading::GetCurrentThreadId;
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetForegroundWindow, GetMessageW, MSG, PostThreadMessageW, TranslateMessage, WM_NULL,
-};
 
 use crate::asr::Parakeet;
 use crate::audio::{Recorder, SAMPLE_RATE};
@@ -23,7 +18,7 @@ use crate::learn::{self, Fix};
 use crate::llm::Cleaner;
 use crate::models::{self, Model};
 use crate::overlay::Overlay;
-use crate::tray::Tray;
+use crate::tray::{self, Tray};
 use crate::ui::Ui;
 use crate::{api, audio, edits, history, hotkey, paste, system, update, watchdog};
 
@@ -40,6 +35,11 @@ pub enum AppEvent {
     KeyDown,
     KeyUp,
     Escape,
+    /// Another key went down while the talk key was held: a shortcut (macOS lets those through), not dictation.
+    #[cfg_attr(windows, allow(dead_code))]
+    Chord,
+    /// The talk key can't be watched (on macOS, until Mew has the Accessibility permission).
+    KeyUnavailable,
     SpeechReady,
 }
 
@@ -66,7 +66,7 @@ pub fn run() -> Result<()> {
     let first_run = !loaded.welcomed;
     if first_run {
         loaded.welcomed = true;
-        if is_installed() {
+        if system::is_installed() {
             system::set_autostart(true);
         }
         loaded.save();
@@ -87,13 +87,12 @@ pub fn run() -> Result<()> {
     overlay.set_hover_tip(&talk_tip());
     let cleaner = Cleaner::new(models::CLEANUP.path().join(models::CLEANUP.files[0].name));
 
-    let main_thread = unsafe { GetCurrentThreadId() };
     let (events, inbox) = channel();
     let (jobs, job_queue) = channel();
     let (pushes, pushed) = channel::<Value>();
     spawn("worker", {
         let (overlay, cleaner, settings) = (overlay.clone(), cleaner.clone(), settings.clone());
-        move || worker(job_queue, overlay, cleaner, settings, pushes, main_thread)
+        move || worker(job_queue, overlay, cleaner, settings, pushes)
     });
     spawn("models", {
         let (events, jobs, overlay) = (events.clone(), jobs.clone(), overlay.clone());
@@ -128,22 +127,16 @@ pub fn run() -> Result<()> {
         }
     });
 
-    // The tray and the Mew window live on this thread, which runs the message loop they need.
+    // The tray and the Mew window live on this thread, which runs the event loop they need.
     let mut tray = Tray::new(&settings.lock().unwrap())?;
     let mut ui = Ui::new();
     watchdog::start();
     let beat = &watchdog::MAIN;
-    let mut msg: MSG = unsafe { std::mem::zeroed() };
-    while unsafe { GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) } > 0 {
-        beat.tick(1);
-        unsafe {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
+    system::run_loop(|| {
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             beat.tick(2);
             match tray.handle(&event) {
-                Some(Command::Quit) => return Ok(()),
+                Some(Command::Quit) => return false,
                 Some(Command::Open(page)) => ui.open(page),
                 Some(command) => {
                     apply(command, &settings, &overlay, false);
@@ -159,7 +152,9 @@ pub fn run() -> Result<()> {
                     let names = devices.lock().unwrap().clone();
                     tray.refresh_mics(&names, settings.lock().unwrap().microphone.as_deref());
                 }
-                TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } => {
+                TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. }
+                    if !tray::MENU_ON_CLICK =>
+                {
                     ui.open("overview")
                 }
                 _ => {}
@@ -177,7 +172,8 @@ pub fn run() -> Result<()> {
             ui.pump(&mut |method, params| api::handle(method, params, &mut ctx));
         }
         beat.tick(0);
-    }
+        true
+    });
     Ok(())
 }
 
@@ -198,7 +194,8 @@ pub fn apply(command: Command, settings: &Mutex<Settings>, overlay: &Overlay, qu
             say(&format!("Got it! Hold {} to talk.", hotkey.label()));
         }
         Command::SetMicrophone(name) => {
-            say(&format!("I'll listen with {}.", name.as_deref().unwrap_or("the Windows default mic")));
+            let default = if cfg!(target_os = "macos") { "the system default mic" } else { "the Windows default mic" };
+            say(&format!("I'll listen with {}.", name.as_deref().unwrap_or(default)));
             s.microphone = name;
         }
         Command::SetCleanup(on) => {
@@ -249,6 +246,16 @@ impl Controller {
                         self.overlay.huh("Okay, never mind.");
                     }
                 }
+                Ok(AppEvent::Chord) => {
+                    if self.recording.as_ref().is_some_and(|r| !r.locked) {
+                        self.cancel();
+                    }
+                }
+                Ok(AppEvent::KeyUnavailable) => self.overlay.say(if cfg!(target_os = "macos") {
+                    "To hear the talk key, I need your OK: turn on Mew in System Settings › Privacy & Security › Accessibility."
+                } else {
+                    "I can't hear the talk key. Try restarting Mew."
+                }),
                 Ok(AppEvent::SpeechReady) => self.speech_ready = true,
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
@@ -339,7 +346,6 @@ fn worker(
     cleaner: Cleaner,
     settings: Arc<Mutex<Settings>>,
     pushes: Sender<Value>,
-    main_thread: u32,
 ) {
     let mut asr: Option<Box<Parakeet>> = None;
     let mut last_paste: Option<(isize, Instant, String)> = None; // (window, when, text)
@@ -376,7 +382,7 @@ fn worker(
         let t2 = Instant::now();
 
         // Back-to-back dictations into the same window get a joining space.
-        let window = unsafe { GetForegroundWindow() } as isize;
+        let window = system::foreground_window();
         let joins = last_paste.as_ref().is_some_and(|(w, at, prev)| {
             *w == window && at.elapsed() < Duration::from_secs(120) && prev.ends_with(['.', '!', '?', ',', ';', ':'])
         });
@@ -391,12 +397,12 @@ fn worker(
 
         if settings.lock().unwrap().learn {
             let (overlay, pushes) = (overlay.clone(), pushes.clone());
-            edits::watch(text.clone(), move |fixes| remember(&fixes, &overlay, &pushes, main_thread));
+            edits::watch(text.clone(), move |fixes| remember(&fixes, &overlay, &pushes));
         }
 
         let keep_text = settings.lock().unwrap().history != KeepHistory::Off;
         let saved = history::add(&history::NewEntry {
-            app: &system::app_name(window as HWND),
+            app: &system::app_name(window),
             text: &text,
             raw: &raw,
             audio_ms: (audio.len() as u64 * 1000 / SAMPLE_RATE as u64) as i64,
@@ -408,7 +414,7 @@ fn worker(
         match saved {
             Ok(entry) => {
                 let _ = pushes.send(json!({ "type": "dictation", "entry": entry }));
-                unsafe { PostThreadMessageW(main_thread, WM_NULL, 0, 0) }; // wake the window's thread
+                system::wake(); // the window's thread
             }
             Err(e) => log::warn!("saving to history failed: {e:#}"),
         }
@@ -425,7 +431,7 @@ fn worker(
 }
 
 /// Saves spelling fixes learned from the user's edits and lets them know.
-fn remember(fixes: &[Fix], overlay: &Overlay, pushes: &Sender<Value>, main_thread: u32) {
+fn remember(fixes: &[Fix], overlay: &Overlay, pushes: &Sender<Value>) {
     let mut terms = config::dictionary();
     for fix in fixes {
         if let Err(e) = history::add_fix(fix) {
@@ -445,7 +451,7 @@ fn remember(fixes: &[Fix], overlay: &Overlay, pushes: &Sender<Value>, main_threa
         }
     }
     let _ = pushes.send(json!({ "type": "dictionary" }));
-    unsafe { PostThreadMessageW(main_thread, WM_NULL, 0, 0) };
+    system::wake();
 }
 
 fn load_models(events: Sender<AppEvent>, jobs: Sender<Job>, overlay: Overlay, hotkey: Hotkey, first_run: bool) {
@@ -505,11 +511,6 @@ fn talk_tip() -> String {
     let vk = hotkey::HOTKEY_VK.load(Ordering::Relaxed);
     let key = Hotkey::ALL.iter().find(|h| h.vk() == vk).map_or("your talk key", |h| h.label());
     format!("Hold {key} and talk to me")
-}
-
-/// Installed by Velopack (lives in a `current` folder), as opposed to a dev build.
-fn is_installed() -> bool {
-    std::env::current_exe().ok().and_then(|e| Some(e.parent()?.file_name()? == "current")).unwrap_or(false)
 }
 
 fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {

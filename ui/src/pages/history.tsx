@@ -5,6 +5,7 @@ import { Confirm } from "../components/controls";
 import { Icon } from "../components/icons";
 import { toast } from "../components/toast";
 import { fmtDay, fmtTime, plural, startOfDay } from "../format";
+import { mac } from "../platform";
 
 type Page = { items: Entry[]; more: boolean };
 
@@ -35,7 +36,7 @@ export function HistoryPage({ go }: { go(page: string): void }) {
       if (e.type === "dictation" && e.entry.text && !query) setItems((prev) => [e.entry, ...(prev ?? [])]);
     });
     const keys = (ev: KeyboardEvent) => {
-      if (ev.ctrlKey && ev.key.toLowerCase() === "f") {
+      if ((mac ? ev.metaKey : ev.ctrlKey) && ev.key.toLowerCase() === "f") {
         ev.preventDefault();
         search.current?.focus();
       }
@@ -112,7 +113,7 @@ export function HistoryPage({ go }: { go(page: string): void }) {
         <input ref={search} type="search" placeholder="Search transcripts and apps" aria-label="Search transcripts"
           value={query} onInput={(e) => setQuery(e.currentTarget.value)}
           onKeyDown={(e) => e.key === "Escape" && setQuery("")} />
-        <kbd class="search-hint">Ctrl F</kbd>
+        <kbd class="search-hint">{mac ? "⌘ F" : "Ctrl F"}</kbd>
       </div>
 
       {items === null ? null : !visible.length ? (

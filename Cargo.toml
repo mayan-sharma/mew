@@ -2,13 +2,14 @@
 name = "mew"
 version = "0.3.0"
 edition = "2024"
-description = "Hold a key, talk, and Mew types it. Fully local dictation for Windows."
+description = "Hold a key, talk, and Mew types it. Fully local dictation for Windows and macOS."
 license = "MIT"
 
 [dependencies]
 ab_glyph = "0.2.32"
 anyhow = "1.0.104"
 cpal = "0.18.2"
+getrandom = "0.4.3"
 log = { version = "0.4.34", features = ["std"] }
 ort = "2.0.0-rc.14"
 raw-window-handle = "0.6.2"
@@ -20,6 +21,9 @@ tiny-skia = "0.12.0"
 tray-icon = "0.26.1"
 ureq = { version = "3.4.2", features = ["json"] }
 velopack = "1.2.161"
+wry = "0.57.1"
+
+[target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = ["Win32_System_Com", "Win32_UI_Accessibility"] }
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
@@ -27,7 +31,6 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_Graphics_Gdi",
     "Win32_Storage_FileSystem",
     "Win32_Security",
-    "Win32_Security_Cryptography",
     "Win32_System_Console",
     "Win32_System_DataExchange",
     "Win32_System_Diagnostics_ToolHelp",
@@ -43,12 +46,89 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
-wry = "0.57.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+dispatch2 = "0.3.1"
+libc = "0.2.191"
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "libc",
+    "objc2-core-foundation",
+    "objc2-quartz-core",
+    "NSAppearance",
+    "NSApplication",
+    "NSColor",
+    "NSEvent",
+    "NSGraphics",
+    "NSGraphicsContext",
+    "NSPanel",
+    "NSPasteboard",
+    "NSPasteboardItem",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSScreen",
+    "NSView",
+    "NSWindow",
+    "NSWorkspace",
+] }
+objc2-application-services = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "AXError",
+    "AXUIElement",
+    "HIServices",
+] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "objc2",
+    "CFCGTypes",
+    "CFData",
+    "CFDate",
+    "CFDictionary",
+    "CFMachPort",
+    "CFNumber",
+    "CFRunLoop",
+    "CFString",
+] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "objc2",
+    "CGColorSpace",
+    "CGDataProvider",
+    "CGEvent",
+    "CGEventSource",
+    "CGEventTypes",
+    "CGImage",
+    "CGRemoteOperation",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSData",
+    "NSDate",
+    "NSError",
+    "NSGeometry",
+    "NSObject",
+    "NSRunLoop",
+    "NSString",
+] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "objc2-core-foundation",
+    "CALayer",
+    "CATransaction",
+] }
+objc2-service-management = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "objc2",
+    "objc2-foundation",
+    "SMAppService",
+] }
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
 strip = true
 
-[build-dependencies]
+[target.'cfg(windows)'.build-dependencies]
 embed-resource = "3.0.12"
