@@ -15,7 +15,7 @@ Status of the macOS port (Apple Silicon), for whoever picks it up next. Windows 
 
 - Talk key: **Fn** by default; Right Option and Right Command are the alternatives. Caps Lock and F8 aren't offered: macOS reports Caps Lock as a toggle and F-keys as media keys.
 - **Apple Silicon only** (arm64, llama.cpp on Metal).
-- **Ad-hoc signing** for now; `MEW_SIGN_IDENTITY` picks a certificate. No notarization and no CI release job yet.
+- **Ad-hoc signing** for now; `MEW_SIGN_IDENTITY` picks a certificate. No notarization yet; the release workflow attaches an ad-hoc signed `Mew-macOS-arm64.zip` to each GitHub Release.
 - Bundle id `io.github.mayan-sharma.mew`. Minimum macOS 13.4, the prebuilt ONNX Runtime's own minimum (`.cargo/config.toml` sets it for every build).
 
 ## How the macOS side works

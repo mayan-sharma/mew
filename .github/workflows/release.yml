@@ -1,7 +1,7 @@
 name: Release
 
-# Push a tag like v0.3.0 to build the installer and publish a GitHub Release.
-# Run it manually to build the installer as an artifact without releasing anything.
+# Push a tag like v0.4.0 to build the Windows installer and the macOS app and publish a GitHub Release.
+# Run it manually to build both as artifacts without releasing anything.
 on:
   push:
     tags: ["v*"]
@@ -13,6 +13,8 @@ permissions:
 jobs:
   installer:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
     steps:
       - uses: actions/checkout@v7
 
@@ -67,3 +69,39 @@ jobs:
           --repoUrl https://github.com/${{ github.repository }}
           --token ${{ secrets.GITHUB_TOKEN }}
           --publish --releaseName "Mew ${{ steps.version.outputs.value }}" --tag ${{ github.ref_name }}
+
+  # Ad-hoc signed Mew.app (no notarization yet), zipped with ditto so the signature survives.
+  # Waits for the Windows job, which creates the release, then attaches the zip to it.
+  mac:
+    needs: installer
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build Mew.app
+        run: scripts/package-mac.sh ${{ needs.installer.outputs.version }}
+
+      - name: Zip it
+        run: ditto -c -k --keepParent dist/Mew.app dist/Mew-macOS-arm64.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Mew-macOS-${{ needs.installer.outputs.version }}
+          path: dist/Mew-macOS-arm64.zip
+          if-no-files-found: error
+
+      - name: Attach to the GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" dist/Mew-macOS-arm64.zip --repo "${{ github.repository }}" --clobber

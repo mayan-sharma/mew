@@ -31,13 +31,17 @@ The **Mew window** has four pages:
 
 ## Install
 
-**Windows:** run `Mew-win-Setup.exe`. No admin prompt. Mew starts, downloads its models once (about 1.9 GB, with progress shown by the cat) and starts with Windows from then on. Uninstall from Windows Settings > Apps, which also removes the models.
+Downloads are on the [Releases page](https://github.com/mayan-sharma/mew/releases). Neither build is signed by Microsoft or Apple yet, so each OS warns you once.
 
-**macOS** (13.4 or later, Apple Silicon): move `Mew.app` to Applications and open it. It downloads the same models and adds itself as a login item. macOS asks for three permissions:
+**Windows:** run `Mew-win-Setup.exe`. If "Windows protected your PC" appears, click **More info**, then **Run anyway**. No admin prompt. Mew starts, downloads its models once (about 1.9 GB, with progress shown by the cat) and starts with Windows from then on. Uninstall from Windows Settings > Apps, which also removes the models.
+
+**macOS** (13.4 or later, Apple Silicon): unzip `Mew-macOS-arm64.zip`, move `Mew.app` to Applications and open it. macOS blocks the first launch because Mew isn't notarized: open System Settings › Privacy & Security, scroll down and click **Open Anyway** next to the Mew message (or run `xattr -dr com.apple.quarantine /Applications/Mew.app` once). Mew then downloads the same models and adds itself as a login item. macOS asks for three permissions:
 
 - **Accessibility**, to catch the talk key, type with Cmd+V and watch for your edits. Mew asks on first launch and works as soon as you allow it in System Settings › Privacy & Security › Accessibility.
 - **Input Monitoring**, if macOS asks for it too.
 - **Microphone**, the first time you talk.
+
+Each release is signed separately, so after replacing `Mew.app` with a newer one, remove Mew from the Accessibility list and allow it again.
 
 To uninstall, quit Mew, drag it to the Trash, and delete `~/Library/Application Support/Mew` (the models).
 
@@ -96,7 +100,7 @@ Running from `target/release` needs `MEW_LLAMA_DIR` pointing at a folder with `l
 ## CI and releases
 
 - **CI** (`.github/workflows/ci.yml`): every push to `main` and every PR builds the UI, then runs `cargo fmt --check`, `cargo clippy -D warnings` and the tests on Windows, and clippy and the tests on macOS.
-- **Release** (`.github/workflows/release.yml`): push a tag matching Cargo.toml's version (`git tag v0.3.0; git push --tags`) to build the Windows installer and publish a GitHub Release with the Velopack files. Run it manually from the Actions tab to just build the installer as a downloadable artifact. There's no macOS release job yet; it waits on signing.
+- **Release** (`.github/workflows/release.yml`): push a tag matching Cargo.toml's version (`git tag v0.4.0; git push --tags`) to build the Windows installer and publish a GitHub Release with the Velopack files, then attach the ad-hoc signed `Mew-macOS-arm64.zip`. Run it manually from the Actions tab to just build both as downloadable artifacts.
 
 ## Before a public release
 
