@@ -1,0 +1,27 @@
+src/overlay/macos.rs
+  6d355c46ceaf08de 1-3,95-96,100,103
+docs/macos-port.md
+  6d355c46ceaf08de 30
+README.md
+  6d355c46ceaf08de 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.7",
+  "base_commit_sha": "205fee9220eed652fe4138c0a0ad8ead5b50cf50",
+  "prompts": {
+    "6d355c46ceaf08de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b69221c7-cb0d-4af7-807b-2e9bdfcfecd5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "mayan.sharma@1mg.com",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 7,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    }
+  }
+}
