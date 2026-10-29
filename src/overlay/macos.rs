@@ -1,5 +1,6 @@
-//! A borderless, non-activating panel on every Space, just above the Dock. AppKit windows belong to the main
-//! thread, so the animation runs there on a run loop timer, which keeps firing while a menu is open.
+//! A borderless, non-activating panel on every Space, at the bottom of the screen (over the Dock, which still gets
+//! the clicks). AppKit windows belong to the main thread, so the animation runs there on a run loop timer, which
+//! keeps firing while a menu is open.
 
 use std::ffi::c_void;
 use std::sync::{Arc, Mutex};
@@ -91,14 +92,15 @@ impl Window {
         Self { panel, layer, size: (0, 0), scale: 1.0, visible: false }
     }
 
-    /// Bottom center of the screen you're working on (the one with the focused window), at its scale.
+    /// Bottom edge of the screen you're working on (the one with the focused window), centered beside any side Dock,
+    /// at that screen's scale.
     pub fn place(&mut self) {
         let mtm = MainThreadMarker::from(&*self.panel);
         let Some(screen) = NSScreen::mainScreen(mtm) else { return };
-        let area = screen.visibleFrame();
+        let (bottom, area) = (screen.frame().origin.y, screen.visibleFrame());
         let scale = screen.backingScaleFactor() as f32;
         let (w, h) = (f64::from(cat::CANVAS_W), f64::from(cat::CANVAS_H));
-        let origin = NSPoint::new(area.origin.x + (area.size.width - w) / 2.0, area.origin.y + 6.0);
+        let origin = NSPoint::new(area.origin.x + (area.size.width - w) / 2.0, bottom + 6.0);
         self.panel.setFrame_display(NSRect::new(origin, NSSize::new(w, h)), false);
         CATransaction::begin();
         CATransaction::setDisableActions(true);

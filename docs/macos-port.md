@@ -27,7 +27,7 @@ OS-specific code lives in `src/<module>/windows.rs` and `src/<module>/macos.rs`,
 | Main loop (`system`) | NSApplication (Accessory policy) pumped by hand, like the Windows `GetMessageW` loop; workers wake it through the main dispatch queue |
 | Hotkey | Event tap on keyDown and flagsChanged. The talk key is swallowed unless another key goes down while it's held: then it's a shortcut, Mew cancels quietly and the release reaches apps |
 | Paste | NSPasteboard snapshot and restore, Cmd+V posted with `CGEventPost`; both writes marked Transient and Concealed |
-| Overlay | Non-activating NSPanel at status level on every Space; tiny-skia frame → CGImage → CALayer, from a main-thread run loop timer |
+| Overlay | Non-activating NSPanel at status level on every Space, at the screen's bottom edge (over the Dock, which still gets the clicks); tiny-skia frame → CGImage → CALayer, from a main-thread run loop timer |
 | Mew window | NSWindow + wry, plus an Edit menu so Cmd+C/V/X/A/Z work in it. Closing it hides the app so the keyboard goes back to the app you were in |
 | Learn from edits | `AXFocusedUIElement` → `AXValue`; skips `AXSecureTextField` |
 | llama-server | Metal build in `Mew.app/Contents/MacOS/llama`, under an `sh` guard in its own process group that ends it when Mew quits or crashes |

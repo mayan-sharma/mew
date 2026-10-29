@@ -2,7 +2,7 @@
 
 Hold a key, talk, let go. Mew types what you said into whatever app you're in. Everything runs on your computer. Windows and macOS (Apple Silicon).
 
-A small cat sits above the taskbar (on macOS, above the Dock) to show Mew is running: asleep while waiting, ears up while listening, a speech bubble with what it typed.
+A small cat sits above the taskbar (on macOS, at the bottom of the screen) to show Mew is running: asleep while waiting, ears up while listening, a speech bubble with what it typed.
 
 ## Using it
 
