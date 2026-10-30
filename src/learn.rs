@@ -10,6 +10,8 @@ pub struct Fix {
 
 const MAX_FIXES: usize = 3;
 const MAX_PHRASE_WORDS: usize = 3;
+/// How many pieces the speech model may split a dictionary term into ("g p t 4" -> "GPT-4").
+const MAX_SPLIT_WORDS: usize = 4;
 /// More changed words than this share of the dictation means a rewrite, not a spelling fix.
 const REWRITE_SHARE: f32 = 0.4;
 
@@ -131,37 +133,107 @@ pub fn apply(text: &str, fixes: &[Fix]) -> String {
     let mut out = text.to_string();
     for fix in fixes {
         let heard: Vec<String> = fix.heard.split(' ').map(str::to_lowercase).collect();
-        let tokens: Vec<&str> = out.split(' ').collect();
-        let mut rebuilt: Vec<String> = Vec::with_capacity(tokens.len());
-        let mut i = 0;
-        while i < tokens.len() {
-            let window = tokens.get(i..i + heard.len());
-            let matches = window.is_some_and(|w| {
-                w.iter().zip(&heard).enumerate().all(|(k, (tok, h))| {
-                    let core = tok.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'' && c != '-');
-                    // only the last word may carry trailing punctuation; the first may carry leading
-                    let leading_ok = k == 0 || !tok.starts_with(|c: char| !c.is_alphanumeric());
-                    let trailing_ok = k + 1 == heard.len() || !tok.ends_with(|c: char| !c.is_alphanumeric());
-                    core.to_lowercase() == *h && leading_ok && trailing_ok
-                })
-            });
-            if matches {
-                let first = tokens[i];
-                let last = tokens[i + heard.len() - 1];
-                let lead: String = first.chars().take_while(|c| !c.is_alphanumeric()).collect();
-                let core_end =
-                    last.char_indices().rev().find(|(_, c)| c.is_alphanumeric()).map_or(0, |(p, c)| p + c.len_utf8());
-                let trail = &last[core_end..];
-                rebuilt.push(format!("{lead}{}{trail}", fix.fixed));
-                i += heard.len();
-            } else {
-                rebuilt.push(tokens[i].to_string());
-                i += 1;
-            }
-        }
-        out = rebuilt.join(" ");
+        out = replace_words(&out, heard.len(), &fix.fixed, |words| {
+            words.iter().zip(&heard).all(|(word, h)| word.to_lowercase() == *h)
+        });
     }
     out
+}
+
+/// Respells dictionary terms the way the user wrote them, whatever the capitals or spacing the speech model and the
+/// tidy-up model produced ("github" and "git hub" -> "GitHub"). Sound-alikes are left to `apply`: guessing at those
+/// could quietly change a correct word.
+pub fn spell(text: &str, terms: &[String]) -> String {
+    let mut out = text.to_string();
+    for term in terms {
+        let target = squash(term);
+        if !safe_to_enforce(term, &target) {
+            continue;
+        }
+        for len in 1..=term.split_whitespace().count().max(MAX_SPLIT_WORDS) {
+            out = replace_words(&out, len, term, |words| squash(&words.concat()) == target);
+        }
+    }
+    out
+}
+
+/// Everyday words ("Will", "IT") would change far too much text, and terms that are mostly symbols ("C++", "R&D")
+/// squash down to something that isn't them. The tidy-up model still gets these, and can use context.
+fn safe_to_enforce(term: &str, squashed: &str) -> bool {
+    let symbols = term.chars().any(|c| !c.is_alphanumeric() && !c.is_whitespace());
+    !squashed.is_empty() && !is_common(term.trim()) && (!symbols || squashed.chars().count() >= 3)
+}
+
+/// Replaces each run of `len` words that `matches` accepts, keeping all other text and whitespace as it was. `matches`
+/// sees the words without surrounding punctuation, which stays in place ("(Cooper Netties)," -> "(Kubernetes),").
+/// A run can't cross punctuation or a line break, and a possessive follows the replacement ("Kubernetes's").
+fn replace_words(text: &str, len: usize, with: &str, matches: impl Fn(&[&str]) -> bool) -> String {
+    let tokens = tokens(text);
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < tokens.len() {
+        let run = tokens.get(i..i + len).and_then(|run| match_run(run, &matches));
+        if let Some((lead, tail, gap)) = run {
+            out.push_str(lead);
+            out.push_str(with);
+            out.push_str(tail);
+            out.push_str(gap);
+            i += len;
+        } else {
+            out.push_str(tokens[i].0);
+            out.push_str(tokens[i].1);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// (word, the whitespace after it); together they rebuild the text exactly, apart from any leading whitespace, which
+/// becomes an empty word's gap.
+fn tokens(text: &str) -> Vec<(&str, &str)> {
+    let mut tokens = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let word = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let gap = rest[word..].find(|c: char| !c.is_whitespace()).map_or(rest.len(), |g| word + g);
+        tokens.push((&rest[..word], &rest[word..gap]));
+        rest = &rest[gap..];
+    }
+    tokens
+}
+
+/// If the run matches: what goes before the replacement, after it, and the whitespace that follows.
+fn match_run<'a>(
+    run: &[(&'a str, &'a str)],
+    matches: &impl Fn(&[&str]) -> bool,
+) -> Option<(&'a str, &'a str, &'a str)> {
+    let mut words = Vec::with_capacity(run.len());
+    for (k, (token, gap)) in run.iter().enumerate() {
+        let start = token.find(char::is_alphanumeric)?;
+        let end = word_end(token);
+        let interior = k + 1 < run.len();
+        if (k > 0 && start > 0) || (interior && (end < token.len() || *gap != " ")) {
+            return None;
+        }
+        words.push(&token[start..end]);
+    }
+    let (first, (last, gap)) = (run[0].0, run[run.len() - 1]);
+    let lead = &first[..first.find(char::is_alphanumeric)?];
+    let end = word_end(last);
+    if matches(&words) {
+        return Some((lead, &last[end..], gap));
+    }
+    // "Cooper Netties's": try again without the possessive, which stays in the text.
+    let word = words.last_mut()?;
+    let stem = word.strip_suffix("'s").or_else(|| word.strip_suffix("\u{2019}s"))?;
+    let stem_end = end - (word.len() - stem.len());
+    *word = stem;
+    matches(&words).then(|| (lead, &last[stem_end..], gap))
+}
+
+/// Where a word stops, before any trailing punctuation.
+fn word_end(token: &str) -> usize {
+    token.char_indices().rev().find(|(_, c)| c.is_alphanumeric()).map_or(0, |(p, c)| p + c.len_utf8())
 }
 
 /// Everyday English words: replacing one of these is a change of mind, not a spelling fix.
@@ -222,5 +294,46 @@ mod tests {
         let fixes = [fix("cooper netties", "Kubernetes"), fix("catalyst", "Catalyst")];
         assert_eq!(apply("Cooper Netties, then catalyst.", &fixes), "Kubernetes, then Catalyst.");
         assert_eq!(apply("cooper nettiesish stays", &fixes), "cooper nettiesish stays");
+    }
+
+    #[test]
+    fn applies_learned_fixes_around_line_breaks_and_possessives() {
+        let fixes = [fix("cooper netties", "Kubernetes")];
+        assert_eq!(apply("1. Cooper Netties\n2. Done", &fixes), "1. Kubernetes\n2. Done");
+        assert_eq!(apply("cooper\nnetties", &fixes), "cooper\nnetties", "a run can't cross a line break");
+        assert_eq!(apply("cooper, netties", &fixes), "cooper, netties", "or punctuation");
+        assert_eq!(apply("Cooper Netties's pods", &fixes), "Kubernetes's pods");
+    }
+
+    fn spelled(text: &str, terms: &[&str]) -> String {
+        spell(text, &terms.iter().map(|t| t.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn spells_dictionary_terms_whatever_the_capitals_or_spacing() {
+        let terms = ["GitHub", "kubectl", "GPT-4", "Node.js", "New York"];
+        assert_eq!(spelled("push to github.", &terms), "push to GitHub.");
+        assert_eq!(spelled("Open git hub, please", &terms), "Open GitHub, please");
+        assert_eq!(spelled("Kubectl works", &terms), "kubectl works");
+        assert_eq!(spelled("try gpt 4 or g p t 4", &terms), "try GPT-4 or GPT-4");
+        assert_eq!(spelled("(node js)", &terms), "(Node.js)");
+        assert_eq!(spelled("github's api", &terms), "GitHub's api");
+        assert_eq!(spelled("I love new york", &terms), "I love New York");
+    }
+
+    #[test]
+    fn spelling_keeps_everything_else() {
+        let terms = ["GitHub"];
+        assert_eq!(spelled("  one\n\n2.  two  ", &terms), "  one\n\n2.  two  ", "whitespace");
+        assert_eq!(spelled("githubby git, hub", &terms), "githubby git, hub", "not whole words");
+        assert_eq!(spelled("", &terms), "");
+        assert_eq!(spelled("github", &[]), "github");
+        assert_eq!(spelled("日本語 github", &terms), "日本語 GitHub");
+    }
+
+    #[test]
+    fn spelling_leaves_everyday_words_and_symbol_terms_to_the_tidy_up_model() {
+        assert_eq!(spelled("we will see if it works", &["Will", "IT"]), "we will see if it works");
+        assert_eq!(spelled("c++ and c and rd", &["C++", "R&D"]), "c++ and c and rd");
     }
 }

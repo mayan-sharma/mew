@@ -112,7 +112,7 @@ fn selftest(wav: &Path) -> Result<()> {
     let raw = asr.transcribe(&audio)?;
     let asr_time = t.elapsed();
     let t = Instant::now();
-    let clean = cleaner.clean(&raw);
+    let clean = learn::spell(&cleaner.clean(&raw), &config::dictionary());
     println!("audio {:.1}s | asr {asr_time:?} | cleanup {:?}", audio.len() as f32 / 16_000.0, t.elapsed());
     println!("heard: {raw}\ntyped: {clean}");
     Ok(())
