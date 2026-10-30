@@ -26,6 +26,8 @@ const TAP: Duration = Duration::from_millis(300); // shorter presses are taps, n
 const DOUBLE_TAP: Duration = Duration::from_millis(500); // tap, then tap again within this = hands-free
 const TAIL: Duration = Duration::from_millis(100); // keep listening briefly so the last word isn't clipped
 const MAX_RECORDING: Duration = Duration::from_secs(300);
+/// How long the last dictation stays in memory for Retype when history doesn't hold it ("Don't keep").
+const UNSAVED_TTL: Duration = Duration::from_secs(600);
 
 /// True while the mic is open; the worker won't cover the listening cat with old results.
 static RECORDING: AtomicBool = AtomicBool::new(false);
@@ -34,6 +36,8 @@ static CLEANUP_ON: AtomicBool = AtomicBool::new(true);
 pub enum AppEvent {
     KeyDown,
     KeyUp,
+    /// Shift + talk key: type the last dictation again.
+    Retype,
     Escape,
     /// Another key went down while the talk key was held: a shortcut (macOS lets those through), not dictation.
     #[cfg_attr(windows, allow(dead_code))]
@@ -50,6 +54,7 @@ pub enum Command {
     SetAutostart(bool),
     SetHistory(KeepHistory),
     SetLearn(bool),
+    SetAutoUpdates(bool),
     /// Open the Mew window on a page ("overview", "history", "dictionary", "settings").
     Open(&'static str),
     Quit,
@@ -58,6 +63,7 @@ pub enum Command {
 enum Job {
     Load(Box<Parakeet>),
     Transcribe(Vec<f32>, Instant),
+    Retype,
 }
 
 pub fn run() -> Result<()> {
@@ -91,7 +97,7 @@ pub fn run() -> Result<()> {
     let (jobs, job_queue) = channel();
     let (pushes, pushed) = channel::<Value>();
     spawn("worker", {
-        let (overlay, cleaner, settings) = (overlay.clone(), cleaner.clone(), settings.clone());
+        let (overlay, cleaner, settings, pushes) = (overlay.clone(), cleaner.clone(), settings.clone(), pushes.clone());
         move || worker(job_queue, overlay, cleaner, settings, pushes)
     });
     spawn("models", {
@@ -100,11 +106,12 @@ pub fn run() -> Result<()> {
     });
     hotkey::start(events.clone());
     spawn("controller", {
-        let (overlay, settings) = (overlay.clone(), settings.clone());
+        let (overlay, settings, pushes) = (overlay.clone(), settings.clone(), pushes.clone());
         move || {
             Controller {
                 settings,
                 overlay,
+                pushes,
                 recorder,
                 cleaner,
                 jobs,
@@ -168,7 +175,13 @@ pub fn run() -> Result<()> {
         }
         if ui.is_open() {
             beat.tick(4);
-            let mut ctx = api::Ctx { settings: &settings, overlay: &overlay, tray: &mut tray, devices: &devices };
+            let mut ctx = api::Ctx {
+                settings: &settings,
+                overlay: &overlay,
+                tray: &mut tray,
+                devices: &devices,
+                pushes: &pushes,
+            };
             ui.pump(&mut |method, params| api::handle(method, params, &mut ctx));
         }
         beat.tick(0);
@@ -205,6 +218,7 @@ pub fn apply(command: Command, settings: &Mutex<Settings>, overlay: &Overlay, qu
         }
         Command::SetAutostart(on) => system::set_autostart(on),
         Command::SetLearn(on) => s.learn = on,
+        Command::SetAutoUpdates(on) => s.auto_updates = on,
         Command::SetHistory(keep) => {
             s.history = keep;
             if let Err(e) = history::prune(keep) {
@@ -224,6 +238,7 @@ struct Recording {
 struct Controller {
     settings: Arc<Mutex<Settings>>,
     overlay: Overlay,
+    pushes: Sender<Value>,
     recorder: Arc<Recorder>,
     cleaner: Cleaner,
     jobs: Sender<Job>,
@@ -240,6 +255,13 @@ impl Controller {
             match inbox.recv_timeout(Duration::from_millis(250)) {
                 Ok(AppEvent::KeyDown) => self.key_down(),
                 Ok(AppEvent::KeyUp) => self.key_up(),
+                Ok(AppEvent::Retype) => {
+                    if self.recording.is_some() {
+                        self.key_down(); // Shift doesn't change what the key does mid-dictation
+                    } else {
+                        let _ = self.jobs.send(Job::Retype);
+                    }
+                }
                 Ok(AppEvent::Escape) => {
                     if self.recording.is_some() {
                         self.cancel();
@@ -265,7 +287,9 @@ impl Controller {
             }
             self.cleaner.stop_if_idle();
             if Instant::now() > next_update_check {
-                update::check(&self.overlay, false);
+                if self.settings.lock().unwrap().auto_updates {
+                    update::check(&self.overlay, &self.pushes, false);
+                }
                 next_update_check = Instant::now() + Duration::from_secs(12 * 3600);
             }
             if Instant::now() > next_prune {
@@ -349,6 +373,7 @@ fn worker(
 ) {
     let mut asr: Option<Box<Parakeet>> = None;
     let mut last_paste: Option<(isize, Instant, String)> = None; // (window, when, text)
+    let mut unsaved: Option<(String, Instant)> = None; // the last dictation, if history doesn't hold it
     for job in jobs {
         let (audio, released) = match job {
             Job::Load(model) => {
@@ -356,6 +381,13 @@ fn worker(
                 continue;
             }
             Job::Transcribe(audio, released) => (audio, released),
+            Job::Retype => {
+                hotkey::wait_for_release();
+                if let Some((window, text)) = retype(&overlay, &unsaved) {
+                    last_paste = Some((window, Instant::now(), text));
+                }
+                continue;
+            }
         };
         let Some(asr) = asr.as_mut() else { continue };
         let show = |f: &dyn Fn()| {
@@ -379,6 +411,7 @@ fn worker(
         }
         let text = if CLEANUP_ON.load(Ordering::Relaxed) { cleaner.clean(&raw) } else { raw.clone() };
         let text = learn::apply(&text, &history::fixes().unwrap_or_default()); // spellings learned from your edits
+        let text = learn::spell(&text, &config::dictionary()); // even with tidy-up off or skipped
         let t2 = Instant::now();
 
         // Back-to-back dictations into the same window get a joining space.
@@ -387,17 +420,23 @@ fn worker(
             *w == window && at.elapsed() < Duration::from_secs(120) && prev.ends_with(['.', '!', '?', ',', ';', ':'])
         });
         let typed = if joins { format!(" {text}") } else { text.clone() };
-        if let Err(e) = paste::paste(&typed) {
-            log::error!("paste failed: {e:#}");
-            show(&|| overlay.huh("I couldn't type here. Try clicking into a text box."));
-            continue;
-        }
-        last_paste = Some((window, Instant::now(), text.clone()));
-        show(&|| overlay.say(&text));
-
-        if settings.lock().unwrap().learn {
-            let (overlay, pushes) = (overlay.clone(), pushes.clone());
-            edits::watch(text.clone(), move |fixes| remember(&fixes, &overlay, &pushes));
+        match paste::paste(&typed) {
+            Ok(()) => {
+                last_paste = Some((window, Instant::now(), text.clone()));
+                show(&|| overlay.say(&text));
+                if settings.lock().unwrap().learn {
+                    let (overlay, pushes) = (overlay.clone(), pushes.clone());
+                    edits::watch(text.clone(), move |fixes| remember(&fixes, &overlay, &pushes));
+                }
+            }
+            // The words are still saved below, so they aren't lost with the paste.
+            Err(e) => {
+                log::error!("paste failed: {e:#}");
+                let keys = retype_keys();
+                show(&|| {
+                    overlay.huh(&format!("I couldn't type that, but I kept it. Click a text box and press {keys}."))
+                });
+            }
         }
 
         let keep_text = settings.lock().unwrap().history != KeepHistory::Off;
@@ -411,6 +450,7 @@ fn worker(
             latency_ms: ((t2 - released) + TAIL).as_millis() as i64,
             keep_text,
         });
+        let saved_failed = saved.is_err();
         match saved {
             Ok(entry) => {
                 let _ = pushes.send(json!({ "type": "dictation", "entry": entry }));
@@ -418,6 +458,7 @@ fn worker(
             }
             Err(e) => log::warn!("saving to history failed: {e:#}"),
         }
+        unsaved = (!keep_text || saved_failed).then(|| (text.clone(), Instant::now()));
         log::info!(
             "audio {:.1}s | asr {}ms | cleanup {}ms{} | release->paste {}ms | {} words",
             audio.len() as f32 / SAMPLE_RATE as f32,
@@ -428,6 +469,25 @@ fn worker(
             text.split_whitespace().count()
         );
     }
+}
+
+/// Types the last dictation again; returns where and what if it did. Reads history each time so a transcript the user
+/// deleted can't come back.
+fn retype(overlay: &Overlay, unsaved: &Option<(String, Instant)>) -> Option<(isize, String)> {
+    let unsaved = unsaved.as_ref().filter(|(_, at)| at.elapsed() < UNSAVED_TTL).map(|(text, _)| text.clone());
+    let saved = || history::list("", None, 1).ok()?.into_iter().next()?.text;
+    let Some(text) = unsaved.or_else(saved) else {
+        overlay.huh("I don't have anything to type yet.");
+        return None;
+    };
+    let window = system::foreground_window();
+    if let Err(e) = paste::paste(&text) {
+        log::error!("retype failed: {e:#}");
+        overlay.huh("I still can't type here. Try clicking into a text box.");
+        return None;
+    }
+    overlay.say(&text);
+    Some((window, text))
 }
 
 /// Saves spelling fixes learned from the user's edits and lets them know.
@@ -507,10 +567,17 @@ fn download(model: &Model, overlay: &Overlay, label: &str, loud: bool) {
     overlay.set_hover_tip(&talk_tip());
 }
 
-fn talk_tip() -> String {
+fn talk_key() -> &'static str {
     let vk = hotkey::HOTKEY_VK.load(Ordering::Relaxed);
-    let key = Hotkey::ALL.iter().find(|h| h.vk() == vk).map_or("your talk key", |h| h.label());
-    format!("Hold {key} and talk to me")
+    Hotkey::ALL.iter().find(|h| h.vk() == vk).map_or("your talk key", |h| h.label())
+}
+
+fn talk_tip() -> String {
+    format!("Hold {} and talk to me", talk_key())
+}
+
+fn retype_keys() -> String {
+    format!("Shift+{}", talk_key())
 }
 
 fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {

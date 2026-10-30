@@ -10,6 +10,7 @@ A small cat sits above the taskbar (on macOS, at the bottom of the screen) to sh
 |---|---|
 | Hold **Right Alt** (macOS: **Fn**), talk, release | Mew types it into the focused app |
 | Double-tap the talk key | Hands-free: keep talking, press once more to finish |
+| **Shift** + talk key | Types your last dictation again, for when it landed in the wrong place |
 | **Esc** while it's listening | Cancel |
 | Click the tray cat, or launch Mew again | Opens the Mew window (macOS: the menu bar cat opens its menu; choose Open Mew) |
 | Right-click the tray cat | Talk key, microphone, AI tidy-up, start at login, quit |
@@ -22,10 +23,12 @@ The **Mew window** has four pages:
 
 - **Overview**: time saved, words, streak, typical wait, words per day (30 days), top apps, latest transcripts.
 - **History**: every transcript grouped by day, searchable (Ctrl+F, ⌘F on macOS); copy, view what was heard before tidy-up, delete (with Undo).
-- **Dictionary**: names and jargon Mew should always spell your way.
-- **Settings**: talk key, microphone, AI tidy-up, how long to keep transcripts (default 30 days), start at login, updates, licenses.
+- **Dictionary**: names and jargon Mew should always spell your way. Capitals and spacing are fixed in everything it types ("github" and "git hub" become "GitHub"), with tidy-up on or off. Everyday words ("Will") and short symbol terms ("C++") are only passed to tidy-up as a hint, since forcing them would change other text. Words it hears as something else altogether are covered by Learn from my edits.
+- **Settings**: talk key, microphone, AI tidy-up, how long to keep transcripts (default 30 days), start at login, automatic update checks, licenses.
 
 **AI tidy-up** removes "um"s, applies "no wait, I mean…" corrections and fixes punctuation. Turn it off to get exactly what was heard.
+
+If Mew can't type (for example, the clipboard is busy), it keeps the dictation: it's in History, and Shift + talk key types it once you've clicked into a text box. With "Keep transcripts" set to "Don't keep", the last dictation stays in memory only, for 10 minutes.
 
 **Learn from my edits**: after Mew types, it watches that one text box for 30 seconds (via UI Automation on Windows, the Accessibility API on macOS, never password fields). If you fix a misheard word, say "cooper netties" to "Kubernetes", Mew remembers the pair, replaces it in future dictations (even with tidy-up off) and adds the word to your dictionary. Rewrites, added words and swaps to everyday words are ignored. Learned pairs are listed, and removable, on the Dictionary page.
 
@@ -33,7 +36,7 @@ The **Mew window** has four pages:
 
 Downloads are on the [Releases page](https://github.com/mayan-sharma/mew/releases). Neither build is signed by Microsoft or Apple yet, so each OS warns you once.
 
-**Windows:** run `Mew-win-Setup.exe`. If "Windows protected your PC" appears, click **More info**, then **Run anyway**. No admin prompt. Mew starts, downloads its models once (about 1.9 GB, with progress shown by the cat) and starts with Windows from then on. Uninstall from Windows Settings > Apps, which also removes the models.
+**Windows:** run `Mew-win-Setup.exe`. If "Windows protected your PC" appears, click **More info**, then **Run anyway**. No admin prompt. Mew starts, downloads its models once (about 1.9 GB, with progress shown by the cat) and starts with Windows from then on. Uninstall from Windows Settings > Apps, which also removes the models. New versions download in the background and apply the next time Mew starts, or right away with **Restart to update** in Settings.
 
 **macOS** (13.4 or later, Apple Silicon): unzip `Mew-macOS-arm64.zip`, move `Mew.app` to Applications and open it. macOS blocks the first launch because Mew isn't notarized: open System Settings › Privacy & Security, scroll down and click **Open Anyway** next to the Mew message (or run `xattr -dr com.apple.quarantine /Applications/Mew.app` once). Mew then downloads the same models and adds itself as a login item. macOS asks for three permissions:
 
@@ -42,6 +45,8 @@ Downloads are on the [Releases page](https://github.com/mayan-sharma/mew/release
 - **Microphone**, the first time you talk.
 
 Each release is signed separately, so after replacing `Mew.app` with a newer one, remove Mew from the Accessibility list and allow it again.
+
+Mew tells you when a new version is out; Settings links to the download. To update, replace `Mew.app` with it.
 
 To uninstall, quit Mew, drag it to the Trash, and delete `~/Library/Application Support/Mew` (the models).
 
@@ -57,11 +62,13 @@ To uninstall, quit Mew, drag it to the Trash, and delete `~/Library/Application 
 | Overlay | Drawn with `tiny-skia`; a layered window on Windows, a non-activating panel on macOS. Never takes focus; hides during fullscreen apps on Windows |
 | Mew window | `ui/` (Preact + Vite, built to one HTML file embedded in the executable) in a web view via `wry` (WebView2, WKWebView). Talks to Rust over `window.ipc` (`src/api.rs`). Closing it ends its web view, so it costs nothing while closed |
 | History | SQLite (`mew.db`, `src/history.rs`): one row per dictation. Text expires per the "Keep transcripts" setting; numbers are kept for stats |
-| Install/updates | Velopack (per-user, updates from GitHub Releases once `update::FEED` is set) |
+| Install/updates | Velopack on Windows (per-user, updates from GitHub Releases). On macOS, a check of the latest GitHub Release |
 
 Safety net for the tidy-up: short phrases skip it, and if the model's output looks like an answer instead of a cleanup, Mew types the original transcript.
 
 OS-specific code sits next to the module that uses it: `src/<module>/windows.rs` and `src/<module>/macos.rs`, behind the same functions.
+
+Mew goes online only to download its models and, unless you turn it off in Settings, to ask GitHub for the newest version every 12 hours.
 
 Files: on Windows the app is in `%LOCALAPPDATA%\Mew`, models/settings/dictionary/logs in `%LOCALAPPDATA%\Mew Data`. On macOS, `Mew.app` and `~/Library/Application Support/Mew`.
 
@@ -106,6 +113,5 @@ Running from `target/release` needs `MEW_LLAMA_DIR` pointing at a folder with `l
 
 - Code-sign `Mew-win-Setup.exe` and `mew.exe` (unsigned apps that hook the keyboard trip SmartScreen and antivirus heuristics).
 - On macOS, sign with a Developer ID and notarize; Gatekeeper blocks ad-hoc signed apps downloaded from the internet.
-- Set `update::FEED` to the GitHub repo and upload `dist\releases` with `vpk upload github`.
 
 Third-party licenses: `assets/NOTICE.txt` (shipped next to `mew.exe` and in `Mew.app/Contents/Resources`, opened by Settings > Licenses).
