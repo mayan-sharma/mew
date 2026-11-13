@@ -85,7 +85,7 @@ impl Cleaner {
                 Ok(server) => {
                     log::info!("cleanup model ready in {:?}", t.elapsed());
                     *this.server.lock().unwrap() = Some(server);
-                    let _ = this.chat(&messages("ok"), 1); // prime the prompt cache
+                    let _ = this.chat(&messages("ok"), 1, None); // prime the prompt cache
                 }
                 Err(e) => log::warn!("cleanup model failed to start: {e:#}"),
             }
@@ -108,7 +108,7 @@ impl Cleaner {
         if words < MIN_WORDS || !self.ready() {
             return text.to_string();
         }
-        match self.chat(&messages(text), words * 3 + 50) {
+        match self.chat(&messages(text), words * 3 + 50, None) {
             Ok(out) => {
                 let out = out.trim().to_string();
                 let ratio = out.split_whitespace().count() as f32 / words as f32;
@@ -131,14 +131,37 @@ impl Cleaner {
         }
     }
 
-    fn chat(&self, messages: &Value, max_tokens: usize) -> Result<String> {
+    /// Starts the server if needed and waits for it. False if the model isn't downloaded or doesn't start in time.
+    pub fn wait_ready(&self, timeout: Duration) -> bool {
+        self.warm();
+        let deadline = Instant::now() + timeout;
+        while !self.ready() {
+            if !self.model.exists() || Instant::now() > deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        true
+    }
+
+    /// A reply that matches `schema` (llama-server turns it into a grammar), parsed. Used for voice commands.
+    pub fn ask_json(&self, messages: &Value, schema: &Value, max_tokens: usize) -> Result<Value> {
+        *self.last_used.lock().unwrap() = Instant::now();
+        let reply = self.chat(messages, max_tokens, Some(schema))?;
+        serde_json::from_str(&reply).with_context(|| format!("reply isn't JSON: {reply}"))
+    }
+
+    fn chat(&self, messages: &Value, max_tokens: usize, schema: Option<&Value>) -> Result<String> {
         let (url, key) = {
             let guard = self.server.lock().unwrap();
             let server = guard.as_ref().context("server not running")?;
             (server.url.clone(), server.key.clone())
         };
         let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(REQUEST_TIMEOUT)).build().into();
-        let body = json!({ "messages": messages, "temperature": 0, "max_tokens": max_tokens });
+        let mut body = json!({ "messages": messages, "temperature": 0, "max_tokens": max_tokens });
+        if let Some(schema) = schema {
+            body["response_format"] = json!({ "type": "json_schema", "json_schema": { "schema": schema } });
+        }
         let mut response = agent
             .post(format!("{url}/v1/chat/completions"))
             .header("Authorization", format!("Bearer {key}"))

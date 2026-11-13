@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
 
+mod agent;
 mod api;
 mod app;
 mod asr;
@@ -70,6 +71,7 @@ fn main() {
 fn cli(args: &[String]) -> Result<()> {
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["--selftest", wav] => selftest(Path::new(wav)),
+        ["--command", said] => command(said),
         ["--seed-demo"] => {
             // Only into a scratch data folder, never the real history.
             anyhow::ensure!(std::env::var_os("MEW_DATA_DIR").is_some(), "set MEW_DATA_DIR to a scratch folder first");
@@ -88,7 +90,7 @@ fn cli(args: &[String]) -> Result<()> {
         ["--write-icon", path] => std::fs::write(path, cat::icon_ico()).context("writing icon"),
         ["--write-icns", path] => std::fs::write(path, cat::icon_icns()).context("writing icon"),
         _ => bail!(
-            "usage: mew [--download | --selftest <16k-mono.wav> | --render <dir> | --write-icon <file.ico> | \
+            "usage: mew [--download | --selftest <16k-mono.wav> | --command <text|16k-mono.wav> | --render <dir> | --write-icon <file.ico> | \
              --write-icns <file.icns>]"
         ),
     }
@@ -115,6 +117,31 @@ fn selftest(wav: &Path) -> Result<()> {
     let clean = cleaner.clean(&raw);
     println!("audio {:.1}s | asr {asr_time:?} | cleanup {:?}", audio.len() as f32 / 16_000.0, t.elapsed());
     println!("heard: {raw}\ntyped: {clean}");
+    Ok(())
+}
+
+/// What a voice command would do, from text or a WAV file; nothing is carried out.
+fn command(said: &str) -> Result<()> {
+    let heard = if said.ends_with(".wav") {
+        let mut asr = asr::Parakeet::load(&models::SPEECH.path()).context("speech model")?;
+        asr.transcribe(&read_wav(Path::new(said))?)?
+    } else {
+        said.to_string()
+    };
+    println!("heard: {heard}");
+    let Some(request) = agent::request(&heard) else {
+        println!("not a command: it doesn't start with \"Mew\"");
+        return Ok(());
+    };
+    println!("command: {} ({})", request.text, if request.addressed { "addressed" } else { "maybe dictation" });
+    let cleaner = llm::Cleaner::new(models::CLEANUP.path().join(models::CLEANUP.files[0].name));
+    anyhow::ensure!(cleaner.wait_ready(Duration::from_secs(120)), "the tidy-up model isn't ready");
+    let t = Instant::now();
+    let action = agent::plan(request.text, &cleaner)?;
+    println!("action: {action:?} in {:?}", t.elapsed());
+    if let agent::Action::OpenApp { app } = &action {
+        println!("opens: {:?}", agent::find_app(app, &agent::installed_apps()).map(|(_, path)| path));
+    }
     Ok(())
 }
 
