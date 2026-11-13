@@ -10,6 +10,7 @@ A small cat sits above the taskbar (on macOS, at the bottom of the screen) to sh
 |---|---|
 | Hold **Right Alt** (macOS: **Fn**), talk, release | Mew types it into the focused app |
 | Double-tap the talk key | Hands-free: keep talking, press once more to finish |
+| Start with "**Mew,**" ("Mew, open Chrome") | A command instead of dictation: open an app, switch tidy-up, learning or start at login, set how long transcripts are kept, open a page of the Mew window, open YouTube or X, or rick-roll you. Needs the tidy-up model |
 | **Shift** + talk key | Types your last dictation again, for when it landed in the wrong place |
 | **Esc** while it's listening | Cancel |
 | Click the tray cat, or launch Mew again | Opens the Mew window (macOS: the menu bar cat opens its menu; choose Open Mew) |

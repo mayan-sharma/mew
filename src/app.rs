@@ -1,5 +1,5 @@
 //! Wires everything together. Threads: main (tray + message loop), controller (hotkey state machine),
-//! worker (speech-to-text, cleanup, paste), models (first-run downloads), plus audio/hotkey/overlay.
+//! worker (speech-to-text, cleanup, paste or a voice command), models (first-run downloads), plus audio/hotkey/overlay.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
@@ -20,7 +20,7 @@ use crate::models::{self, Model};
 use crate::overlay::Overlay;
 use crate::tray::{self, Tray};
 use crate::ui::Ui;
-use crate::{api, audio, edits, history, hotkey, paste, system, update, watchdog};
+use crate::{agent, api, audio, edits, history, hotkey, paste, system, update, watchdog};
 
 const TAP: Duration = Duration::from_millis(300); // shorter presses are taps, not dictation
 const DOUBLE_TAP: Duration = Duration::from_millis(500); // tap, then tap again within this = hands-free
@@ -171,7 +171,14 @@ pub fn run() -> Result<()> {
             ui.open("overview");
         }
         while let Ok(event) = pushed.try_recv() {
-            ui.push(&event);
+            match event["type"].as_str() {
+                Some("open") => ui.open(event["page"].as_str().unwrap_or("overview")),
+                Some("settings") => {
+                    tray.sync(&settings.lock().unwrap()); // changed by a voice command
+                    ui.push(&event);
+                }
+                _ => ui.push(&event),
+            }
         }
         if ui.is_open() {
             beat.tick(4);
@@ -408,6 +415,11 @@ fn worker(
         if raw.is_empty() {
             show(&|| overlay.huh("Hmm, I didn't catch that."));
             continue;
+        }
+        if let Some(request) = agent::request(&raw)
+            && agent::run(&request, &cleaner, &settings, &overlay, &pushes)
+        {
+            continue; // a command, not dictation
         }
         let text = if CLEANUP_ON.load(Ordering::Relaxed) { cleaner.clean(&raw) } else { raw.clone() };
         let text = learn::apply(&text, &history::fixes().unwrap_or_default()); // spellings learned from your edits
