@@ -2,7 +2,7 @@ use std::sync::atomic::Ordering;
 
 use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE, VK_SHIFT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, SetWindowsHookExW, WH_KEYBOARD_LL,
     WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
@@ -25,6 +25,10 @@ pub fn listen() {
     }
 }
 
+pub fn shift_down() -> bool {
+    unsafe { GetAsyncKeyState(VK_SHIFT as i32) < 0 }
+}
+
 unsafe extern "system" fn hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let kb = unsafe { &*(lparam as *const KBDLLHOOKSTRUCT) };
@@ -34,7 +38,7 @@ unsafe extern "system" fn hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRE
             let up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
             if kb.vkCode == HOTKEY_VK.load(Ordering::Relaxed) {
                 if down && !HELD.swap(true, Ordering::Relaxed) {
-                    send(AppEvent::KeyDown);
+                    send(if shift_down() { AppEvent::Retype } else { AppEvent::KeyDown });
                 } else if up && HELD.swap(false, Ordering::Relaxed) {
                     send(AppEvent::KeyUp);
                 }

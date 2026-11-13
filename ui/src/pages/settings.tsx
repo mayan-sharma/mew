@@ -25,6 +25,8 @@ export function SettingsPage() {
     });
   };
 
+  const install = () => call("installUpdate").catch(() => toast("Couldn't start the update"));
+
   const wipe = async () => {
     const which = confirm;
     setConfirm(null);
@@ -40,7 +42,7 @@ export function SettingsPage() {
 
       <section class="settings-group" aria-labelledby="talking">
         <h2 id="talking">Talking</h2>
-        <Row title="Talk key" description="Hold it to talk, release to type. Double-tap for hands-free, Esc to cancel.">
+        <Row title="Talk key" description="Hold it to talk, release to type. Double-tap for hands-free, Esc to cancel. Shift + the key types your last dictation again.">
           <Segmented label="Talk key" value={s.hotkey} options={s.hotkeys} onChange={(v) => set("hotkey", v)} />
         </Row>
         <Row title="Microphone" htmlFor="mic">
@@ -62,7 +64,7 @@ export function SettingsPage() {
 
       <section class="settings-group" aria-labelledby="privacy">
         <h2 id="privacy">History and privacy</h2>
-        <p class="group-note">Everything stays on this {device}. Audio is never saved, and nothing is sent anywhere.</p>
+        <p class="group-note">Your words stay on this {device}. Audio is never saved. Mew only goes online to download its models and to check GitHub for updates.</p>
         <Row title="Keep transcripts" htmlFor="keep" description="Word counts and stats are kept either way.">
           <select id="keep" class="select" value={s.history} onChange={(e) => set("history", e.currentTarget.value)}>
             {s.historyOptions.map((o) => <option value={o.id}>{o.label}</option>)}
@@ -81,8 +83,15 @@ export function SettingsPage() {
         <Row title={startAtLogin}>
           <Toggle label={startAtLogin} checked={s.autostart} onChange={(v) => set("autostart", v)} />
         </Row>
-        <Row title="Updates" description={`You're on Mew ${s.version}.`}>
-          <button type="button" class="button" onClick={() => call("checkUpdates")}>Check for updates</button>
+        <Row title="Check for updates automatically" description="Asks GitHub for the newest version every 12 hours.">
+          <Toggle label="Check for updates automatically" checked={s.autoUpdates} onChange={(v) => set("autoUpdates", v)} />
+        </Row>
+        <Row title="Updates" description={s.updateReady
+          ? `You're on Mew ${s.version}. Mew ${s.updateReady} is ${mac ? "out" : "ready"}.`
+          : `You're on Mew ${s.version}.`}>
+          {s.updateReady
+            ? <button type="button" class="button primary" onClick={install}>{mac ? "Download" : "Restart to update"}</button>
+            : <button type="button" class="button" onClick={() => call("checkUpdates")}>Check for updates</button>}
         </Row>
       </section>
 

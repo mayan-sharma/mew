@@ -1,5 +1,6 @@
 //! What the Mew window's page can ask for. Runs on the tray thread; every call is quick (SQLite, files, atomics).
 
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
@@ -24,6 +25,7 @@ pub struct Ctx<'a> {
     pub overlay: &'a Overlay,
     pub tray: &'a mut Tray,
     pub devices: &'a Arc<Mutex<Vec<String>>>,
+    pub pushes: &'a Sender<Value>,
 }
 
 pub fn handle(method: &str, params: &Value, ctx: &mut Ctx) -> Result<Value> {
@@ -61,6 +63,7 @@ pub fn handle(method: &str, params: &Value, ctx: &mut Ctx) -> Result<Value> {
                 "autostart" => Command::SetAutostart(value.as_bool().context("bool")?),
                 "history" => Command::SetHistory(parse(value)?),
                 "learn" => Command::SetLearn(value.as_bool().context("bool")?),
+                "autoUpdates" => Command::SetAutoUpdates(value.as_bool().context("bool")?),
                 key => bail!("unknown setting {key}"),
             };
             apply(command, ctx.settings, ctx.overlay, true);
@@ -93,7 +96,11 @@ pub fn handle(method: &str, params: &Value, ctx: &mut Ctx) -> Result<Value> {
             Value::Null
         }
         "checkUpdates" => {
-            update::check(ctx.overlay, true);
+            update::check(ctx.overlay, ctx.pushes, true);
+            Value::Null
+        }
+        "installUpdate" => {
+            update::install()?;
             Value::Null
         }
         other => bail!("unknown method {other}"),
@@ -117,6 +124,8 @@ fn settings_json(ctx: &Ctx) -> Value {
         "microphones": *ctx.devices.lock().unwrap(),
         "cleanup": s.cleanup,
         "learn": s.learn,
+        "autoUpdates": s.auto_updates,
+        "updateReady": update::available(),
         "autostart": system::autostart_enabled(),
         "history": s.history,
         "historyOptions": KeepHistory::ALL.iter().map(|k| json!({ "id": k, "label": k.label() })).collect::<Vec<_>>(),

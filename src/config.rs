@@ -152,6 +152,8 @@ pub struct Settings {
     pub history: KeepHistory,
     /// Watch the text box after typing and learn spelling fixes the user makes.
     pub learn: bool,
+    /// Check GitHub for new versions every 12 hours (Settings can always check by hand).
+    pub auto_updates: bool,
     /// First-run setup (autostart, dictionary, welcome) has happened.
     pub welcomed: bool,
 }
@@ -164,6 +166,7 @@ impl Default for Settings {
             cleanup: true,
             history: KeepHistory::Month,
             learn: true,
+            auto_updates: true,
             welcomed: false,
         }
     }

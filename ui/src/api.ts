@@ -36,6 +36,8 @@ export type Settings = {
   microphones: string[];
   cleanup: boolean;
   learn: boolean;
+  autoUpdates: boolean;
+  updateReady: string | null;
   autostart: boolean;
   history: string;
   historyOptions: Option[];

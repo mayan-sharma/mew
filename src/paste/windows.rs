@@ -27,13 +27,18 @@ pub fn paste(text: &str) -> Result<()> {
     let utf16: Vec<u8> = text.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
     write(&BTreeMap::from([(CF_UNICODETEXT, utf16)]))?;
     let sequence = unsafe { GetClipboardSequenceNumber() };
-    ctrl_v();
+    let sent = ctrl_v();
     if let Some(saved) = saved {
         std::thread::sleep(RESTORE_DELAY);
         // Skip if something else was copied in the meantime.
-        if unsafe { GetClipboardSequenceNumber() } == sequence {
-            write(&saved)?;
+        if unsafe { GetClipboardSequenceNumber() } == sequence
+            && let Err(e) = write(&saved)
+        {
+            log::warn!("restoring the clipboard failed: {e:#}"); // the text was still typed
         }
+    }
+    if !sent {
+        bail!("Windows blocked the keystroke");
     }
     Ok(())
 }
@@ -58,7 +63,8 @@ pub fn copy(text: &str) -> Result<()> {
     Ok(())
 }
 
-fn ctrl_v() {
+/// False if Windows didn't accept the keystrokes.
+fn ctrl_v() -> bool {
     let key = |vk: u16, up: bool| INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
@@ -72,7 +78,7 @@ fn ctrl_v() {
         },
     };
     let inputs = [key(VK_CONTROL, false), key(VK_V, false), key(VK_V, true), key(VK_CONTROL, true)];
-    unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), size_of::<INPUT>() as i32) };
+    unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), size_of::<INPUT>() as i32) == inputs.len() as u32 }
 }
 
 struct Clipboard;

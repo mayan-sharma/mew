@@ -8,8 +8,8 @@ use objc2_core_foundation::{
     CFBoolean, CFDictionary, CFMachPort, CFRetained, CFRunLoop, CFString, kCFRunLoopCommonModes,
 };
 use objc2_core_graphics::{
-    CGEvent, CGEventField, CGEventFlags, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventTapProxy,
-    CGEventType, CGRequestListenEventAccess,
+    CGEvent, CGEventField, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation, CGEventTapOptions,
+    CGEventTapPlacement, CGEventTapProxy, CGEventType, CGRequestListenEventAccess,
 };
 
 use super::{CAPTURE_ESCAPE, HELD, HOTKEY_VK, send};
@@ -74,6 +74,10 @@ fn ask_for_access() {
     }
 }
 
+pub fn shift_down() -> bool {
+    CGEventSource::flags_state(CGEventSourceStateID::CombinedSessionState).0 & CGEventFlags::MaskShift.0 != 0
+}
+
 unsafe extern "C-unwind" fn on_event(
     _: CGEventTapProxy,
     kind: CGEventType,
@@ -95,7 +99,8 @@ unsafe extern "C-unwind" fn on_event(
         let down = CGEvent::flags(event).0 & modifier_mask(key) != 0;
         if down && !HELD.swap(true, Ordering::Relaxed) {
             CHORD.store(false, Ordering::Relaxed);
-            send(AppEvent::KeyDown);
+            let shift = CGEvent::flags(event).0 & CGEventFlags::MaskShift.0 != 0;
+            send(if shift { AppEvent::Retype } else { AppEvent::KeyDown });
         } else if !down && HELD.swap(false, Ordering::Relaxed) {
             send(AppEvent::KeyUp);
             if CHORD.load(Ordering::Relaxed) {
